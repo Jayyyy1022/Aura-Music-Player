@@ -33,7 +33,7 @@ let vinylPrevArt = '';
 let vinylNextArt = '';
 
 // ── Visualizer State ─────────────────────────────────────────
-const viz = { analyser: null, data: null, canvas: null, ctx: null, frame: null, ready: false };
+const viz = { analyser: null, data: null, canvas: null, ctx: null, frame: null, ready: false, stream: null, audioCtx: null };
 let vizMode = 1;
 let vizTime = 0;
 const particles = [];
@@ -570,6 +570,8 @@ async function initVisualizer() {
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.82;
     audioCtx.createMediaStreamSource(stream).connect(analyser);
+    viz.stream = stream;
+    viz.audioCtx = audioCtx;
     viz.analyser = analyser;
     viz.data = new Uint8Array(analyser.frequencyBinCount);
     viz.timeData = new Uint8Array(analyser.fftSize);
@@ -621,8 +623,16 @@ function startViz() {
 
 function stopViz() {
   cancelAnimationFrame(viz.frame);
+  viz.frame = null;
   const glowEl = document.getElementById('npo-art-glow');
   if (glowEl) glowEl.style.opacity = '0';
+  // Release screen capture so GPU memory is freed
+  viz.stream?.getTracks().forEach(t => t.stop());
+  viz.audioCtx?.close();
+  viz.stream = null;
+  viz.audioCtx = null;
+  viz.analyser = null;
+  viz.ready = false;
 }
 
 function getArtBounds() {
