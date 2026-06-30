@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    :root {
+      --accent: 168, 85, 247;
+      --bg-r: 13; --bg-g: 13; --bg-b: 20;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: transparent;
+      overflow: hidden;
+      font-family: -apple-system, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .pill {
+      position: absolute;
+      inset: 0;
+      background: rgba(var(--bg-r), var(--bg-g), var(--bg-b), 0.94);
+      backdrop-filter: blur(32px) saturate(1.8);
+      -webkit-backdrop-filter: blur(32px) saturate(1.8);
+      border: 1px solid rgba(var(--accent), 0.22);
+      border-top: none;
+      border-radius: 0 0 min(28px, 40%) min(28px, 40%);
+      padding: 0 10px 0 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow:
+        0 6px 28px rgba(0,0,0,0.55),
+        0 0 0 1px rgba(var(--accent), 0.08) inset;
+      -webkit-app-region: drag;
+      transition: background 0.7s ease, border-color 0.7s ease, box-shadow 0.7s ease;
+    }
+
+    .art {
+      height: calc(100% - 14px);
+      max-height: 46px;
+      min-height: 28px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      object-fit: cover;
+      background: rgba(255,255,255,0.07);
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+      cursor: pointer;
+      box-shadow: 0 0 0 1.5px rgba(var(--accent), 0.35);
+      transition: box-shadow 0.7s ease;
+    }
+
+    .info {
+      flex: 1;
+      min-width: 0;
+      -webkit-app-region: no-drag;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .title {
+      font-size: clamp(10.5px, 2.6vw, 13px);
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.35;
+    }
+
+    /* artist line OR lyric line — shares the same slot */
+    .sub {
+      font-size: clamp(9px, 1.9vw, 10.5px);
+      color: rgba(255,255,255,0.44);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.4;
+      font-style: normal;
+      font-weight: 400;
+      transition: opacity 0.22s ease, color 0.55s ease;
+    }
+    .sub.fading { opacity: 0; }
+    .sub.lyric-mode {
+      color: rgba(255, 255, 255, 0.92);
+      font-style: italic;
+      font-weight: 600;
+      font-size: clamp(9.5px, 2vw, 11px);
+      text-shadow: 0 0 10px rgba(var(--accent), 0.8);
+      transition: opacity 0.22s ease;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+
+    button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 4px;
+      color: rgba(255,255,255,0.6);
+      transition: color 0.12s, transform 0.1s;
+      flex-shrink: 0;
+    }
+    button:hover  { color: #fff; transform: scale(1.12); }
+    button:active { transform: scale(0.90); transition: transform 0.06s; }
+
+    #play-btn { color: rgba(255,255,255,0.88); padding: 5px 6px; }
+    #play-btn:hover { color: rgb(var(--accent)); }
+
+    #dismiss-btn {
+      color: rgba(255,255,255,0.25);
+      font-size: 12px;
+      padding: 4px 2px 4px 5px;
+    }
+    #dismiss-btn:hover { color: rgba(255,255,255,0.6); transform: none; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="pill">
+    <img id="art" class="art" src="" alt="" crossorigin="anonymous">
+    <div class="info" id="info">
+      <div class="title" id="title">—</div>
+      <div class="sub"   id="sub"></div>
+    </div>
+    <div class="controls">
+      <button id="prev-btn">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+      </button>
+      <button id="play-btn">
+        <svg id="play-icon"  viewBox="0 0 24 24" width="19" height="19"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+        <svg id="pause-icon" viewBox="0 0 24 24" width="19" height="19" class="hidden"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+      </button>
+      <button id="next-btn">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+      </button>
+      <button id="dismiss-btn">&#10005;</button>
+    </div>
+  </div>
+
+  <script>
+    const titleEl  = document.getElementById('title');
+    const subEl    = document.getElementById('sub');
+    const artEl    = document.getElementById('art');
+    const playIcon  = document.getElementById('play-icon');
+    const pauseIcon = document.getElementById('pause-icon');
+    const root      = document.documentElement;
+
+    // ── Color extraction ───────────────────────────────────────
+    const colorCanvas = document.createElement('canvas');
+    colorCanvas.width = colorCanvas.height = 10;
+    const colorCtx = colorCanvas.getContext('2d');
+
+    function applyColor(img) {
+      try {
+        colorCtx.drawImage(img, 0, 0, 10, 10);
+        const data = colorCtx.getImageData(0, 0, 10, 10).data;
+        let sumR = 0, sumG = 0, sumB = 0, n = 0;
+        let bestS = -1, bR = 80, bG = 60, bB = 120;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] < 100) continue;
+          const r = data[i]/255, g = data[i+1]/255, b = data[i+2]/255;
+          const max = Math.max(r, g, b), min = Math.min(r, g, b);
+          const s = max === 0 ? 0 : (max - min) / max;
+          if (s > bestS) { bestS = s; bR = data[i]; bG = data[i+1]; bB = data[i+2]; }
+          sumR += data[i]; sumG += data[i+1]; sumB += data[i+2]; n++;
+        }
+        if (!n) return;
+        const avgR = sumR/n, avgG = sumG/n, avgB = sumB/n;
+        const aR = Math.round(bR*0.65 + avgR*0.35);
+        const aG = Math.round(bG*0.65 + avgG*0.35);
+        const aB = Math.round(bB*0.65 + avgB*0.35);
+        const bgR = Math.max(0, aR - 82);
+        const bgG = Math.max(0, aG - 82);
+        const bgB = Math.max(0, aB - 80);
+        root.style.setProperty('--accent', `${aR}, ${aG}, ${aB}`);
+        root.style.setProperty('--bg-r', bgR);
+        root.style.setProperty('--bg-g', bgG);
+        root.style.setProperty('--bg-b', bgB);
+      } catch {}
+    }
+
+    artEl.addEventListener('load', () => applyColor(artEl));
+
+    // ── Track updates ──────────────────────────────────────────
+    let storedArtist = '';
+    let currentLyric = '';
+
+    window.miniAPI.onUpdate(({ title, artist, artUrl, isPlaying }) => {
+      titleEl.textContent = title || '—';
+      storedArtist = artist || '';
+      if (artUrl && artEl.src !== artUrl) artEl.src = artUrl;
+      playIcon.classList.toggle('hidden', isPlaying);
+      pauseIcon.classList.toggle('hidden', !isPlaying);
+      if (!currentLyric) {
+        subEl.textContent = storedArtist;
+        subEl.classList.remove('lyric-mode', 'fading');
+      }
+    });
+
+    // ── Lyric updates ──────────────────────────────────────────
+    let lyricTimer = null;
+
+    window.miniAPI.onLyric(text => {
+      if (text === currentLyric) return;
+      currentLyric = text;
+      clearTimeout(lyricTimer);
+      subEl.classList.add('fading');
+      lyricTimer = setTimeout(() => {
+        subEl.textContent = text || storedArtist;
+        subEl.classList.toggle('lyric-mode', !!text);
+        subEl.classList.remove('fading');
+      }, 220);
+    });
+
+    // ── Buttons ────────────────────────────────────────────────
+    document.getElementById('art').addEventListener('click',      () => window.miniAPI.action('open-npo'));
+    document.getElementById('info').addEventListener('click',     () => window.miniAPI.action('open-npo'));
+    document.getElementById('prev-btn').addEventListener('click', () => window.miniAPI.action('prev'));
+    document.getElementById('play-btn').addEventListener('click', () => window.miniAPI.action('play-pause'));
+    document.getElementById('next-btn').addEventListener('click', () => window.miniAPI.action('next'));
+    document.getElementById('dismiss-btn').addEventListener('click', () => window.miniAPI.action('dismiss'));
+  </script>
+</body>
+</html>

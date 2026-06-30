@@ -1,0 +1,22 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  getClientId:   ()    => ipcRenderer.invoke('get-client-id'),
+  saveClientId:  (id)  => ipcRenderer.invoke('save-client-id', id),
+  getSavedToken: ()    => ipcRenderer.invoke('get-saved-token'),
+  login:         ()    => ipcRenderer.invoke('spotify-login'),
+  refreshToken:  ()    => ipcRenderer.invoke('refresh-token'),
+  logout:        ()    => ipcRenderer.invoke('logout'),
+  fetchLyrics:   (id, tok) => ipcRenderer.invoke('fetch-lyrics', id, tok),
+  launchSpotify: ()    => ipcRenderer.invoke('launch-spotify'),
+  minimize:      ()    => ipcRenderer.send('window-minimize'),
+  maximize:      ()    => ipcRenderer.send('window-maximize'),
+  close:         ()    => ipcRenderer.send('window-close'),
+  toggleFullscreen: () => ipcRenderer.send('window-fullscreen'),
+  setAppIcon:    (d)   => ipcRenderer.send('set-app-icon', d),
+  showMiniPlayer: (data) => ipcRenderer.send('mini:show', data),
+  hideMiniPlayer: ()     => ipcRenderer.send('mini:hide'),
+  updateMiniPlayer: (data) => ipcRenderer.send('mini:update', data),
+  updateMiniLyric:  (text) => ipcRenderer.send('mini:lyric', text),
+  onMiniAction:  (cb) => ipcRenderer.on('mini:action', (_, type) => cb(type)),
+});

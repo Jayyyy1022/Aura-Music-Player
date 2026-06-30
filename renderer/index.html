@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://sdk.scdn.co https://api.spotify.com https://accounts.spotify.com https://*.scdn.co https://*.spotifycdn.com; connect-src 'self' https://sdk.scdn.co https://api.spotify.com https://accounts.spotify.com https://*.scdn.co https://*.spotifycdn.com https://lrclib.net https://api.lyrics.ovh https://spclient.wg.spotify.com; img-src * data:; media-src *; script-src 'self' 'unsafe-inline' https://sdk.scdn.co; style-src 'self' 'unsafe-inline'">
+  <title>Aura</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Background blur layer (album art) -->
+  <div id="bg-blur-layer"><img id="bg-blur-img" src="" alt=""></div>
+  <!-- Hidden canvas for color extraction -->
+  <canvas id="color-canvas" width="16" height="16" style="display:none"></canvas>
+
+  <!-- Custom Titlebar -->
+  <div class="titlebar">
+    <div class="titlebar-drag">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;color:#fff"><path d="M12 4a8 8 0 0 0-8 8v4a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H6v-1a6 6 0 0 1 12 0v1h-1a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-4a8 8 0 0 0-8-8z"/></svg>
+      <span class="app-title">Aura</span>
+    </div>
+    <div class="window-controls">
+      <button class="win-btn" id="settings-open-btn" title="设置" style="-webkit-app-region:no-drag;font-size:14px">&#9881;</button>
+      <button class="win-btn" onclick="window.electronAPI.minimize()">&#8212;</button>
+      <button class="win-btn" onclick="window.electronAPI.maximize()">&#9633;</button>
+      <button class="win-btn close-btn" onclick="window.electronAPI.close()">&#10005;</button>
+    </div>
+  </div>
+
+  <!-- Setup Screen -->
+  <div id="setup-screen" class="fullscreen hidden">
+    <div class="center-card">
+      <div class="logo-icon">🎵</div>
+      <h1>Aura</h1>
+      <p class="subtitle">首先配置 Spotify Developer 应用</p>
+      <div class="setup-steps">
+        <p>① 访问 <strong>developer.spotify.com/dashboard</strong></p>
+        <p>② 创建新应用（App name 随意）</p>
+        <p>③ 在 <strong>Edit settings → Redirect URIs</strong> 添加：</p>
+        <p><code>http://127.0.0.1:8888/callback</code></p>
+        <p>④ 复制 <strong>Client ID</strong> 粘贴到下方</p>
+      </div>
+      <input type="text" id="client-id-input" class="setup-input" placeholder="粘贴 Client ID...">
+      <button id="save-client-id-btn" class="primary-btn">保存并继续</button>
+      <p class="powered-by">Powered by Spotify</p>
+    </div>
+  </div>
+
+  <!-- Login Screen -->
+  <div id="login-screen" class="fullscreen hidden">
+    <div class="center-card">
+      <div class="logo-icon">🎵</div>
+      <h1>Aura</h1>
+      <p class="subtitle">连接你的 Spotify 账户开始播放</p>
+      <button id="login-btn" class="primary-btn">连接 Spotify</button>
+      <p class="hint">将在默认浏览器中完成授权</p>
+      <button id="change-client-btn" class="text-btn">更改 Client ID</button>
+      <p class="powered-by">Powered by Spotify</p>
+    </div>
+  </div>
+
+  <!-- Loading Screen -->
+  <div id="loading-screen" class="fullscreen hidden">
+    <div class="center-card">
+      <div class="spinner"></div>
+      <p style="color:#b3b3b3;margin-top:16px">正在连接...</p>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app" class="hidden">
+    <aside class="sidebar" id="sidebar">
+      <nav class="sidebar-nav">
+        <button class="sidebar-toggle" id="sidebar-toggle" title="收起侧边栏">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+        </button>
+        <a class="nav-item active" data-view="home">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+          <span>主页</span>
+        </a>
+        <a class="nav-item" data-view="search">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          <span>搜索</span>
+        </a>
+        <a class="nav-item" data-view="library">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 5h-3v5.5c0 1.38-1.12 2.5-2.5 2.5S10 13.88 10 12.5s1.12-2.5 2.5-2.5c.57 0 1.08.19 1.5.5V5h4v2zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6z"/></svg>
+          <span>音乐库</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="playlist-section">
+        <div class="playlist-header">播放列表</div>
+        <div id="playlist-list"></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button id="logout-btn" class="logout-btn">退出登录</button>
+      </div>
+    </aside>
+
+    <main class="main-content" id="main-content">
+      <!-- Home -->
+      <div id="home-view" class="view">
+        <div class="view-header">
+          <h1 id="greeting">你好！</h1>
+        </div>
+        <section class="content-section">
+          <h2>最近播放</h2>
+          <div id="recent-content" class="card-grid"></div>
+        </section>
+        <section class="content-section">
+          <h2>喜欢的歌曲</h2>
+          <div id="liked-content"></div>
+        </section>
+      </div>
+
+      <!-- Search -->
+      <div id="search-view" class="view hidden">
+        <div class="search-bar-container">
+          <div class="search-icon-wrap">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#b3b3b3" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          </div>
+          <input type="text" id="search-input" class="search-input" placeholder="搜索歌曲、艺术家、专辑...">
+        </div>
+        <div id="search-results"></div>
+      </div>
+
+      <!-- Library -->
+      <div id="library-view" class="view hidden">
+        <div class="view-header"><h1>音乐库</h1></div>
+        <div id="library-content"></div>
+      </div>
+
+      <!-- Playlist Detail -->
+      <div id="playlist-view" class="view hidden">
+        <div id="playlist-detail"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Player Bar -->
+  <div id="player-bar" class="player-bar hidden">
+    <div class="now-playing-section">
+      <img id="now-album-art" src="" alt="" class="now-album-art" crossorigin="anonymous">
+      <div class="now-track-info">
+        <div id="now-track-name" class="now-track-name">&#8212;</div>
+        <div id="now-artist-name" class="now-artist-name">&#8212;</div>
+      </div>
+      <button id="like-btn" class="icon-btn like-btn" title="喜欢">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path id="like-icon-path" fill="currentColor" d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"/></svg>
+      </button>
+    </div>
+
+    <div class="controls-section">
+      <div class="control-buttons">
+        <button id="shuffle-btn" class="icon-btn" title="随机播放">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>
+        </button>
+        <button id="prev-btn" class="icon-btn" title="上一首">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+        </button>
+        <button id="play-btn" class="play-btn" title="播放/暂停">
+          <svg id="play-icon" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+          <svg id="pause-icon" viewBox="0 0 24 24" width="22" height="22" class="hidden"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </button>
+        <button id="next-btn" class="icon-btn" title="下一首">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+        <button id="repeat-btn" class="icon-btn" title="循环">
+          <svg id="repeat-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+          <svg id="repeat-one-icon" viewBox="0 0 24 24" width="18" height="18" class="hidden"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/></svg>
+        </button>
+      </div>
+      <div class="progress-row">
+        <span id="current-time" class="time-label">0:00</span>
+        <div class="progress-bar" id="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+          <div class="progress-thumb" id="progress-thumb"></div>
+        </div>
+        <span id="total-time" class="time-label">0:00</span>
+      </div>
+    </div>
+
+    <div class="volume-section">
+      <button class="icon-btn" id="mute-btn">
+        <svg id="vol-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+      </button>
+      <div class="volume-track" id="volume-track">
+        <div class="volume-fill" id="volume-fill" style="width:70%"></div>
+        <input type="range" id="volume-slider" min="0" max="100" value="70" class="volume-input">
+      </div>
+      <button id="queue-btn" class="icon-btn" title="播放队列">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg>
+      </button>
+      <button id="mini-player-bar-btn" class="icon-btn" title="Mini Player">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><rect x="4" y="9.5" width="16" height="5" rx="2.5"/></svg>
+      </button>
+      <button id="expand-btn" class="icon-btn expand-btn" title="全屏">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Now Playing Overlay -->
+  <div id="npo" class="npo">
+    <div class="npo-bg"><img id="npo-bg-img" src="" alt=""></div>
+    <div class="npo-scrim"></div>
+    <div id="npo-orbs" class="npo-orbs"></div>
+    <canvas id="npo-visualizer"></canvas>
+    <button class="npo-close-btn" id="npo-close">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+    </button>
+    <button class="npo-close-btn" id="npo-mini-btn" style="left:56px" title="Mini Player">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><rect x="3" y="9" width="18" height="6" rx="3"/></svg>
+    </button>
+    <div class="npo-inner">
+      <div class="npo-main">
+        <div id="npo-art-wrap" class="npo-art-wrap">
+          <img id="npo-art" class="npo-art" src="" alt="" crossorigin="anonymous">
+          <div id="npo-art-glow" class="npo-art-glow"></div>
+        </div>
+        <div class="npo-meta">
+          <div class="npo-meta-row">
+            <div class="npo-meta-text">
+              <div id="npo-track-name" class="npo-track-name">—</div>
+              <div id="npo-artist-name" class="npo-artist-name">—</div>
+            </div>
+            <button class="npo-icon-btn" id="npo-like-btn" title="喜欢">
+              <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="npo-prog-row">
+          <span id="npo-cur" class="npo-time">0:00</span>
+          <div class="npo-bar" id="npo-bar">
+            <div class="npo-fill" id="npo-fill"></div>
+          </div>
+          <span id="npo-tot" class="npo-time">0:00</span>
+        </div>
+        <div class="npo-btns">
+          <button class="npo-icon-btn npo-secondary" id="npo-shuffle-btn" title="随机">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>
+          </button>
+          <button class="npo-icon-btn" id="npo-prev-btn">
+            <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+          </button>
+          <button class="npo-play-btn" id="npo-play-btn">
+            <svg id="npo-play-icon" viewBox="0 0 24 24" width="30" height="30"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+            <svg id="npo-pause-icon" viewBox="0 0 24 24" width="30" height="30" class="hidden"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          </button>
+          <button class="npo-icon-btn" id="npo-next-btn">
+            <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+          </button>
+          <button class="npo-icon-btn npo-secondary" id="npo-repeat-btn" title="循环">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+          </button>
+        </div>
+        <div class="viz-mode-switcher" id="viz-modes">
+          <button class="viz-mode-btn active" data-mode="1" title="频谱条">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><rect x="1" y="5" width="3" height="10" rx="1"/><rect x="6" y="2" width="3" height="13" rx="1"/><rect x="11" y="7" width="3" height="8" rx="1"/></svg>
+          </button>
+          <button class="viz-mode-btn" data-mode="2" title="引力漩涡">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+              <ellipse cx="8" cy="8" rx="6" ry="3.5" fill="none" stroke="currentColor" stroke-width="1.2"/>
+              <circle cx="8" cy="8" r="1.6"/>
+              <circle cx="2" cy="8" r="0.9"/>
+              <circle cx="14" cy="8" r="0.9"/>
+              <circle cx="5.8" cy="4.8" r="0.8"/>
+              <circle cx="10.2" cy="11.2" r="0.8"/>
+            </svg>
+          </button>
+          <button class="viz-mode-btn" id="npo-lyrics-btn" title="歌词">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 3h12v1.5H2zm0 3h9v1.5H2zm0 3h10v1.5H2zm0 3h7v1.5H2z"/></svg>
+          </button>
+        </div>
+      </div>
+      <!-- Lyrics side panel -->
+      <div id="npo-lyrics" class="npo-lyrics">
+        <div id="npo-lyrics-lines" class="npo-lyrics-lines"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add to playlist modal -->
+  <div id="add-playlist-modal" class="add-playlist-modal hidden">
+    <div class="add-playlist-backdrop" id="add-playlist-backdrop"></div>
+    <div class="add-playlist-box">
+      <div class="add-playlist-header">
+        <span>添加到歌单</span>
+        <button id="add-playlist-close">✕</button>
+      </div>
+      <div id="add-playlist-list" class="add-playlist-list"></div>
+    </div>
+  </div>
+
+  <!-- Queue Panel -->
+  <div id="queue-panel" class="queue-panel">
+    <div class="queue-panel-header">
+      <h3>播放队列</h3>
+      <div style="display:flex;align-items:center;gap:2px">
+        <button id="queue-reshuffle-btn" class="icon-btn" title="重新随机排列">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M17 17h-1.5l-7.5-7.5H6V8h2.5l7.5 7.5H17v1.5l3-2-3-2V14zM6 17h1.5l2-2-1.06-1.06L6 15.5V14l-3 2 3 2V17zm8.5-8.5L15.5 9.5 17 8h-1V6.5l3 2-3 2V9h-1.5z"/></svg>
+        </button>
+        <button id="queue-close-btn" class="icon-btn">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="queue-list" class="queue-list"></div>
+  </div>
+
+  <div id="book-popup" class="book-popup"></div>
+
+  <!-- Settings Panel -->
+  <div id="settings-panel" class="settings-panel hidden">
+    <div class="settings-backdrop" id="settings-backdrop"></div>
+    <div class="settings-box">
+      <div class="settings-header">
+        <span id="settings-header-title">设置</span>
+        <button id="settings-close-btn" class="icon-btn">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-section-title">性能模式</div>
+        <div class="settings-perf-row">
+          <button class="settings-perf-btn" id="perf-high-btn" data-perf="high">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M13 2.05v2.02c3.95.49 7 3.85 7 7.93 0 3.21-1.81 6-4.72 7.72L13 18v-5h5l-1.78-1.78C14.78 12.08 14 13 14 14c0-2.21-1.79-4-4-4s-4 1.79-4 4 1.79 4 4 4c.55 0 1.07-.11 1.55-.3l1.47 1.47C11.39 19.74 10.21 20 9 20c-4.42 0-8-3.58-8-8 0-4.08 3.05-7.44 7-7.93V2.05zM11 2.05v2.02C8.54 4.58 6.5 6 5.26 8H3.13C4.53 5.04 7.49 2.82 11 2.05z"/></svg>
+            <div class="settings-perf-text">
+              <span>高性能</span>
+              <span class="settings-perf-sub">60fps · 完整光效 · 适合独立显卡</span>
+            </div>
+          </button>
+          <button class="settings-perf-btn" id="perf-low-btn" data-perf="low">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M11 21H5c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2h6v18zm2 0h1V3h-1v18zm3-18v18h3c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-3z"/></svg>
+            <div class="settings-perf-text">
+              <span>低性能</span>
+              <span class="settings-perf-sub">30fps · 减少光效 · 节省 CPU</span>
+            </div>
+          </button>
+        </div>
+        <div class="settings-note" id="perf-note"></div>
+        <div class="settings-section-title" id="settings-lang-title">语言 / Language</div>
+        <div class="settings-lang-row">
+          <button class="settings-lang-btn" id="lang-zh-btn">中文</button>
+          <button class="settings-lang-btn" id="lang-en-btn">English</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vinyl fullscreen overlay (turntable) -->
+  <div id="vinyl-overlay" class="vinyl-overlay">
+    <div class="npo-bg"><img id="vinyl-overlay-bg" src="" alt=""></div>
+    <div class="npo-scrim"></div>
+    <div id="vinyl-overlay-orbs" class="npo-orbs"></div>
+    <canvas id="vinyl-visualizer"></canvas>
+    <button class="npo-close-btn" id="vinyl-overlay-close">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+    </button>
+    <div class="vinyl-overlay-layout">
+      <!-- Prev song nav -->
+      <div class="vinyl-nav-side" id="vinyl-nav-prev">
+        <img class="vinyl-nav-art" id="vinyl-prev-art" src="" alt="">
+        <svg viewBox="0 0 24 24" width="28" height="28" class="vinyl-nav-arrow"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+      </div>
+      <!-- Center: turntable + info + modes -->
+      <div class="vinyl-overlay-content">
+        <div class="vinyl-turntable">
+          <div class="vinyl-platter">
+            <div class="vinyl-big-disc" id="vinyl-big-disc">
+              <img class="vinyl-big-label" id="vinyl-big-label" src="" alt="">
+              <div class="vinyl-big-hole"></div>
+            </div>
+          </div>
+          <div class="vinyl-tonearm" id="vinyl-tonearm">
+            <div class="vinyl-tonearm-pivot"></div>
+            <div class="vinyl-tonearm-shaft"></div>
+            <div class="vinyl-tonearm-head"></div>
+          </div>
+        </div>
+        <div class="vinyl-overlay-info">
+          <div class="vinyl-overlay-title" id="vinyl-overlay-title">—</div>
+          <div class="vinyl-overlay-artist" id="vinyl-overlay-artist">—</div>
+        </div>
+        <div class="viz-mode-switcher">
+          <button class="viz-mode-btn active" data-mode="1" title="频谱条">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><rect x="1" y="5" width="3" height="10" rx="1"/><rect x="6" y="2" width="3" height="13" rx="1"/><rect x="11" y="7" width="3" height="8" rx="1"/></svg>
+          </button>
+          <button class="viz-mode-btn" data-mode="2" title="引力漩涡">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+              <ellipse cx="8" cy="8" rx="6" ry="3.5" fill="none" stroke="currentColor" stroke-width="1.2"/>
+              <circle cx="8" cy="8" r="1.6"/><circle cx="2" cy="8" r="0.9"/><circle cx="14" cy="8" r="0.9"/>
+              <circle cx="5.8" cy="4.8" r="0.8"/><circle cx="10.2" cy="11.2" r="0.8"/>
+            </svg>
+          </button>
+          <button class="viz-mode-btn" id="vinyl-lyrics-btn" title="歌词">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 3h12v1.5H2zm0 3h9v1.5H2zm0 3h10v1.5H2zm0 3h7v1.5H2z"/></svg>
+          </button>
+        </div>
+      </div>
+      <!-- Next song nav -->
+      <div class="vinyl-nav-side" id="vinyl-nav-next">
+        <img class="vinyl-nav-art" id="vinyl-next-art" src="" alt="">
+        <svg viewBox="0 0 24 24" width="28" height="28" class="vinyl-nav-arrow"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+      </div>
+    </div>
+    <!-- Lyrics panel (slides up when active) -->
+    <div id="vinyl-lyrics" class="vinyl-lyrics-panel">
+      <div id="vinyl-lyrics-lines" class="npo-lyrics-lines"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
