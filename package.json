@@ -1,12 +1,39 @@
 {
-  "name": "spotify-player",
+  "name": "aura-music-player",
   "version": "1.0.0",
-  "description": "Spotify desktop music player",
+  "description": "A desktop music player powered by Spotify Connect",
   "main": "main.js",
+  "author": "Jayyyy1022",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder"
   },
   "devDependencies": {
-    "electron": "^28.0.0"
+    "electron": "^28.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "electron@28.3.3": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "build": {
+    "appId": "com.aura.musicplayer",
+    "productName": "Aura",
+    "files": [
+      "main.js",
+      "preload.js",
+      "mini-preload.js",
+      "renderer/**/*",
+      "icon.ico"
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }
