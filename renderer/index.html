@@ -27,25 +27,6 @@
     </div>
   </div>
 
-  <!-- Setup Screen -->
-  <div id="setup-screen" class="fullscreen hidden">
-    <div class="center-card">
-      <div class="logo-icon">🎵</div>
-      <h1>Aura</h1>
-      <p class="subtitle">首先配置 Spotify Developer 应用</p>
-      <div class="setup-steps">
-        <p>① 访问 <strong>developer.spotify.com/dashboard</strong></p>
-        <p>② 创建新应用（App name 随意）</p>
-        <p>③ 在 <strong>Edit settings → Redirect URIs</strong> 添加：</p>
-        <p><code>http://127.0.0.1:8888/callback</code></p>
-        <p>④ 复制 <strong>Client ID</strong> 粘贴到下方</p>
-      </div>
-      <input type="text" id="client-id-input" class="setup-input" placeholder="粘贴 Client ID...">
-      <button id="save-client-id-btn" class="primary-btn">保存并继续</button>
-      <p class="powered-by">Powered by Spotify</p>
-    </div>
-  </div>
-
   <!-- Login Screen -->
   <div id="login-screen" class="fullscreen hidden">
     <div class="center-card">
@@ -54,7 +35,6 @@
       <p class="subtitle">连接你的 Spotify 账户开始播放</p>
       <button id="login-btn" class="primary-btn">连接 Spotify</button>
       <p class="hint">将在默认浏览器中完成授权</p>
-      <button id="change-client-btn" class="text-btn">更改 Client ID</button>
       <p class="powered-by">Powered by Spotify</p>
     </div>
   </div>

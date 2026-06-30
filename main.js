@@ -15,12 +15,14 @@ let codeVerifier;
 let tokens = {};
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
-let config = { CLIENT_ID: '' };
+const BUNDLED_CLIENT_ID = '8eaca3ad76a24719ba4a86a5cb6a77d2';
+let config = { CLIENT_ID: BUNDLED_CLIENT_ID };
 
 function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      config = { CLIENT_ID: saved.CLIENT_ID || BUNDLED_CLIENT_ID };
     }
   } catch (e) {}
 }

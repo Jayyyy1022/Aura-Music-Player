@@ -100,7 +100,7 @@ async function api(endpoint, options = {}) {
 
 // ── Screens ────────────────────────────────────────────────
 function showScreen(name) {
-  ['setup-screen', 'login-screen', 'loading-screen', 'app'].forEach(id => {
+  ['login-screen', 'loading-screen', 'app'].forEach(id => {
     document.getElementById(id)?.classList.add('hidden');
   });
   document.getElementById('player-bar')?.classList.add('hidden');
@@ -115,9 +115,6 @@ function showScreen(name) {
 
 // ── Init ────────────────────────────────────────────────────
 async function init() {
-  const clientId = await window.electronAPI.getClientId();
-  if (!clientId) { showScreen('setup'); return; }
-
   showScreen('loading');
 
   let token = await window.electronAPI.getSavedToken();
@@ -1689,16 +1686,6 @@ function applyLang(lang) {
 // ── Event Wiring ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   // Setup
-  document.getElementById('save-client-id-btn').addEventListener('click', async () => {
-    const id = document.getElementById('client-id-input').value.trim();
-    if (!id) return;
-    await window.electronAPI.saveClientId(id);
-    showScreen('login');
-  });
-  document.getElementById('client-id-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('save-client-id-btn').click();
-  });
-
   // Login
   document.getElementById('login-btn').addEventListener('click', async () => {
     showScreen('loading');
@@ -1710,7 +1697,6 @@ document.addEventListener('DOMContentLoaded', () => {
       showScreen('login');
     }
   });
-  document.getElementById('change-client-btn').addEventListener('click', () => showScreen('setup'));
 
   // Logout
   document.getElementById('logout-btn').addEventListener('click', async () => {
