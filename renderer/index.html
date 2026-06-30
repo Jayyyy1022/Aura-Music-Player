@@ -8,6 +8,21 @@
 </head>
 <body>
 
+  <!-- Splash Screen -->
+  <div id="splash-screen" aria-hidden="true">
+    <div class="splash-scan"></div>
+    <div class="splash-bars" id="splash-bars"></div>
+    <div class="splash-center">
+      <div class="splash-logo">
+        <span class="splash-letter" style="--i:0">A</span>
+        <span class="splash-letter" style="--i:1">U</span>
+        <span class="splash-letter" style="--i:2">R</span>
+        <span class="splash-letter" style="--i:3">A</span>
+      </div>
+      <div class="splash-tag">Music Player</div>
+    </div>
+  </div>
+
   <!-- Update notification bar -->
   <div id="update-bar" class="update-bar hidden">
     <span id="update-bar-msg"></span>
@@ -36,8 +51,22 @@
   <!-- Login Screen -->
   <div id="login-screen" class="fullscreen hidden">
     <div class="center-card">
-      <div class="logo-icon">🎵</div>
-      <h1>Aura</h1>
+      <div class="login-logo">
+        <svg width="76" height="76" viewBox="0 0 76 76" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="aura-rg" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#f3e8ff"/>
+              <stop offset="48%" stop-color="#a855f7"/>
+              <stop offset="100%" stop-color="#5b21b6"/>
+            </radialGradient>
+          </defs>
+          <circle cx="38" cy="38" r="6.5" fill="url(#aura-rg)"/>
+          <circle cx="38" cy="38" r="15" stroke="url(#aura-rg)" stroke-width="2.8"/>
+          <circle cx="38" cy="38" r="23" stroke="url(#aura-rg)" stroke-width="2" opacity="0.58"/>
+          <circle cx="38" cy="38" r="32" stroke="url(#aura-rg)" stroke-width="1.2" opacity="0.3"/>
+        </svg>
+      </div>
+      <div class="login-brand">Aura</div>
       <p class="subtitle">连接你的 Spotify 账户开始播放</p>
       <button id="login-btn" class="primary-btn">连接 Spotify</button>
       <p class="hint">将在默认浏览器中完成授权</p>
@@ -170,6 +199,7 @@
     </div>
 
     <div class="volume-section">
+      <span class="norm-dot" id="norm-dot"></span>
       <button class="icon-btn" id="mute-btn">
         <svg id="vol-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
       </button>
@@ -260,6 +290,37 @@
           <button class="viz-mode-btn" id="npo-lyrics-btn" title="歌词">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 3h12v1.5H2zm0 3h9v1.5H2zm0 3h10v1.5H2zm0 3h7v1.5H2z"/></svg>
           </button>
+          <button class="viz-mode-btn" id="npo-features-btn" title="音频特征">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a1 1 0 0 1 1 1v12a1 1 0 0 1-2 0V2a1 1 0 0 1 1-1zM4 4a1 1 0 0 1 1 1v6a1 1 0 0 1-2 0V5a1 1 0 0 1 1-1zM12 3a1 1 0 0 1 1 1v8a1 1 0 0 1-2 0V4a1 1 0 0 1 1-1z"/></svg>
+          </button>
+        </div>
+        <!-- Audio Features Panel -->
+        <div id="audio-features-panel" class="audio-features-panel hidden">
+          <div class="af-item">
+            <div class="af-val" id="af-bpm">—</div>
+            <div class="af-lbl" id="af-bpm-lbl">BPM</div>
+          </div>
+          <div class="af-divider"></div>
+          <div class="af-item">
+            <div class="af-val" id="af-key">—</div>
+            <div class="af-lbl" id="af-key-lbl">调性</div>
+          </div>
+          <div class="af-divider"></div>
+          <div class="af-item af-bar-item">
+            <div class="af-lbl" id="af-energy-lbl">能量</div>
+            <div class="af-bar"><div class="af-bar-fill" id="af-energy-bar"></div></div>
+            <div class="af-pct" id="af-energy">—</div>
+          </div>
+          <div class="af-item af-bar-item">
+            <div class="af-lbl" id="af-valence-lbl">情绪</div>
+            <div class="af-bar"><div class="af-bar-fill" id="af-valence-bar"></div></div>
+            <div class="af-pct" id="af-valence">—</div>
+          </div>
+          <div class="af-item af-bar-item">
+            <div class="af-lbl" id="af-dance-lbl">律动</div>
+            <div class="af-bar"><div class="af-bar-fill" id="af-dance-bar"></div></div>
+            <div class="af-pct" id="af-dance">—</div>
+          </div>
         </div>
       </div>
       <!-- Lyrics side panel -->
@@ -339,6 +400,18 @@
           <button class="settings-lang-btn" id="viz-off-btn">关闭</button>
         </div>
         <div class="settings-note" id="viz-note"></div>
+        <div class="settings-section-title" id="settings-close-title">关闭行为</div>
+        <div class="settings-lang-row">
+          <button class="settings-lang-btn" id="close-tray-btn">最小化到托盘</button>
+          <button class="settings-lang-btn" id="close-quit-btn">直接退出</button>
+        </div>
+        <div class="settings-note" id="close-note"></div>
+        <div class="settings-section-title" id="settings-norm-title">响度标准化</div>
+        <div class="settings-lang-row">
+          <button class="settings-lang-btn" id="norm-on-btn">开启</button>
+          <button class="settings-lang-btn" id="norm-off-btn">关闭</button>
+        </div>
+        <div class="settings-note" id="norm-note"></div>
       </div>
     </div>
   </div>

@@ -17,6 +17,7 @@ let mainWindow;
 let miniPlayerWindow;
 let tray = null;
 let isQuitting = false;
+let closeToTray = true;
 let rpc = null;
 let authServer;
 let codeVerifier;
@@ -31,8 +32,13 @@ function loadConfig() {
     if (fs.existsSync(CONFIG_PATH)) {
       const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
       config = { CLIENT_ID: saved.CLIENT_ID || BUNDLED_CLIENT_ID };
+      if (saved.closeToTray === false) closeToTray = false;
     }
   } catch (e) {}
+}
+
+function saveConfig() {
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify({ ...config, closeToTray }, null, 2)); } catch (e) {}
 }
 
 function saveTokens(data) {
@@ -149,13 +155,14 @@ function createMiniPlayerWindow() {
     width: 340,
     height: 62,
     x: Math.floor(bounds.width / 2 - 170),
-    y: 0,
+    y: 6,
     minWidth: 200,
     maxWidth: 640,
     minHeight: 48,
     maxHeight: 96,
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: true,
@@ -182,11 +189,10 @@ app.whenReady().then(() => {
   createTray();
   initDiscord();
 
-  // Close button hides to tray instead of quitting
   app.on('before-quit', () => { isQuitting = true; });
   mainWindow.on('close', (e) => {
-    if (!isQuitting) { e.preventDefault(); mainWindow.hide(); }
-    else { miniPlayerWindow?.destroy(); }
+    if (!isQuitting && closeToTray) { e.preventDefault(); mainWindow.hide(); }
+    else { isQuitting = true; miniPlayerWindow?.destroy(); }
   });
 
   // Global hotkeys (Ctrl+Alt+←/Space/→)
@@ -331,6 +337,8 @@ ipcMain.on('window-maximize', () => {
   else mainWindow?.maximize();
 });
 ipcMain.on('window-close', () => mainWindow?.close());
+ipcMain.on('set-close-to-tray', (_, val) => { closeToTray = val; saveConfig(); });
+ipcMain.handle('get-close-to-tray', () => closeToTray);
 ipcMain.on('window-fullscreen', () => {
   if (!mainWindow) return;
   mainWindow.setFullScreen(!mainWindow.isFullScreen());

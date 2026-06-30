@@ -10,6 +10,10 @@
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
+    html {
+      clip-path: inset(0 round min(20px, 36%));
+    }
+
     body {
       background: transparent;
       overflow: hidden;
@@ -23,12 +27,9 @@
     .pill {
       position: absolute;
       inset: 0;
-      background: rgba(var(--bg-r), var(--bg-g), var(--bg-b), 0.94);
-      backdrop-filter: blur(32px) saturate(1.8);
-      -webkit-backdrop-filter: blur(32px) saturate(1.8);
+      background: rgba(var(--bg-r), var(--bg-g), var(--bg-b), 0.96);
       border: 1px solid rgba(var(--accent), 0.22);
-      border-top: none;
-      border-radius: 0 0 min(28px, 40%) min(28px, 40%);
+      border-radius: min(20px, 36%);
       padding: 0 10px 0 8px;
       display: flex;
       align-items: center;
@@ -89,11 +90,11 @@
     }
     .sub.fading { opacity: 0; }
     .sub.lyric-mode {
-      color: rgba(255, 255, 255, 0.92);
-      font-style: italic;
+      color: #fff;
+      font-style: normal;
       font-weight: 600;
-      font-size: clamp(9.5px, 2vw, 11px);
-      text-shadow: 0 0 10px rgba(var(--accent), 0.8);
+      font-size: clamp(11px, 2.4vw, 13px);
+      text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
       transition: opacity 0.22s ease;
     }
 

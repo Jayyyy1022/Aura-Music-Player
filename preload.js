@@ -26,4 +26,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installUpdate:      ()     => ipcRenderer.send('update:install'),
   updateTray:         (data) => ipcRenderer.send('tray:update',      data),
   updateDiscord:      (data) => ipcRenderer.send('discord:update',   data),
+  setCloseBehavior:   (val)  => ipcRenderer.send('set-close-to-tray', val),
+  getCloseBehavior:   ()     => ipcRenderer.invoke('get-close-to-tray'),
 });

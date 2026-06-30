@@ -1,3 +1,22 @@
+// ── Splash Animation ─────────────────────────────────────────
+(function() {
+  const splash = document.getElementById('splash-screen');
+  const barsEl = document.getElementById('splash-bars');
+  if (!splash || !barsEl) return;
+  const heights = [25,62,88,45,72,33,95,58,42,78,52,84,28,68,82,48,65,76,30,92,50,70,38,87,60,40,73,55,90,35,64,80];
+  const durs    = [.52,.58,.50,.62,.55,.60,.48,.56,.53,.61,.57,.50,.64,.54,.59,.51,.60,.55,.63,.50,.58,.52,.61,.56,.54,.62,.50,.59,.53,.60,.57,.51];
+  heights.forEach((h, i) => {
+    const b = document.createElement('div');
+    b.className = 'splash-bar';
+    b.style.cssText = `height:${h}%;--delay:${i * 28}ms;--dur:${durs[i] || 0.55}s`;
+    barsEl.appendChild(b);
+  });
+  setTimeout(() => {
+    splash.classList.add('splash-out');
+    setTimeout(() => splash.remove(), 800);
+  }, 2500);
+})();
+
 // ── State ──────────────────────────────────────────────────
 let accessToken = null;
 let currentDuration = 0;
@@ -47,6 +66,15 @@ let lastVizFrameTime = 0;
 let perfMode   = localStorage.getItem('perfMode')   || 'high'; // 'high' | 'low'
 let currentLang = localStorage.getItem('lang')      || 'zh';  // 'zh' | 'en'
 let vizEnabled  = localStorage.getItem('vizEnabled') !== 'false'; // default true
+let normEnabled  = localStorage.getItem('normEnabled') === 'true'; // default off
+let baseVolume   = 70; // user's intended volume (decoupled from normalization adjustments)
+let closeToTray  = true; // synced from main process on init
+
+// ── Audio Features ────────────────────────────────────────────
+let audioFeatures = null;
+let audioFeaturesTrackId = '';
+let featuresVisible = false;
+const KEY_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 
 // ── Spotify API ────────────────────────────────────────────
 let rateLimitedUntil = 0;
@@ -142,7 +170,7 @@ async function launchApp() {
   generateAppIcon();
 
   window.electronAPI.launchSpotify().then(result => {
-    if (result?.status === 'launched') showToast('Spotify 已在后台启动');
+    if (result?.status === 'launched') showToast(i18n[currentLang].spotify_launched);
   }).catch(() => {});
 }
 
@@ -170,23 +198,23 @@ async function ensureDevice() {
 async function waitForSpotifyDevice() {
   const result = await window.electronAPI.launchSpotify();
   if (result?.status === 'not_found') {
-    showToast('未找到 Spotify，请手动安装或打开 Spotify 客户端');
+    showToast(i18n[currentLang].spotify_not_found);
     return null;
   }
 
-  showToast('Spotify 启动中，请稍候...');
+  showToast(i18n[currentLang].spotify_starting);
   for (let i = 0; i < 15; i++) {
     await new Promise(r => setTimeout(r, 1000));
     const data = await api('/me/player/devices');
     if (data?.devices?.length) {
       const device = data.devices.find(d => d.is_active) || data.devices[0];
       activeDeviceId = device.id;
-      showToast('Spotify 已就绪 ✓');
+      showToast(i18n[currentLang].spotify_ready);
       return device.id;
     }
   }
 
-  showToast('连接超时，请手动打开 Spotify 后重试');
+  showToast(i18n[currentLang].spotify_timeout);
   return null;
 }
 
@@ -375,11 +403,14 @@ async function pollPlayback() {
   document.getElementById('repeat-icon').classList.toggle('hidden', repeatMode === 2);
   document.getElementById('repeat-one-icon').classList.toggle('hidden', repeatMode !== 2);
 
-  const vol = state.device?.volume_percent ?? volumeLevel;
-  if (vol !== volumeLevel) {
-    volumeLevel = vol;
-    document.getElementById('volume-slider').value = vol;
-    document.getElementById('volume-fill').style.width = vol + '%';
+  if (!normEnabled) {
+    const vol = state.device?.volume_percent ?? volumeLevel;
+    if (vol !== volumeLevel) {
+      volumeLevel = vol;
+      baseVolume  = vol;
+      document.getElementById('volume-slider').value = vol;
+      document.getElementById('volume-fill').style.width = vol + '%';
+    }
   }
 
   lastPollPos = state.progress_ms || 0;
@@ -419,6 +450,7 @@ async function pollPlayback() {
       if (prevEl) prevEl.src = vinylPrevArt;
     }
     fetchLyrics(track);
+    fetchAudioFeatures(track.id);
   }
   // Sync tonearm with play state when vinyl overlay is open
   try {
@@ -587,6 +619,11 @@ function setVizMode(n) {
   vizMode = n;
   particles.length = 0;
   rings.length = 0;
+  if (vinylLyricsVisible) {
+    vinylLyricsVisible = false;
+    document.getElementById('vinyl-lyrics-btn')?.classList.remove('active');
+    document.getElementById('vinyl-overlay')?.classList.remove('vinyl-lyrics-open');
+  }
   if (n === 2) {
     const maxR = Math.min(viz.canvas?.offsetWidth || 800, viz.canvas?.offsetHeight || 600) * 0.42;
     for (let i = 0; i < 500; i++) {
@@ -893,8 +930,10 @@ async function doSearch(q) {
   const container = document.getElementById('search-results');
   let html = '';
 
+  const t = i18n[currentLang];
+
   if (data.playlists?.items?.length) {
-    html += `<h3 class="results-section-title">歌单</h3><div class="card-grid">`;
+    html += `<h3 class="results-section-title">${t.search_playlists}</h3><div class="card-grid">`;
     html += data.playlists.items.filter(Boolean).slice(0, 6).map(p => `
       <div class="card" data-playlist-id="${p.id}">
         <img src="${p.images?.[0]?.url || ''}" alt="" class="card-img">
@@ -906,21 +945,22 @@ async function doSearch(q) {
   }
 
   if (data.tracks?.items?.length) {
-    html += `<h3 class="results-section-title">歌曲</h3>`;
+    html += `<h3 class="results-section-title">${t.search_tracks}</h3>`;
     html += trackListHTML(data.tracks.items);
   }
 
   if (data.artists?.items?.length) {
-    html += `<h3 class="results-section-title">艺术家</h3><div class="card-grid">`;
+    html += `<h3 class="results-section-title">${t.search_artists}</h3><div class="card-grid">`;
     html += data.artists.items.slice(0, 5).map(a => `
       <div class="card">
         <img src="${a.images?.[0]?.url || ''}" alt="" class="card-img artist-img">
         <div class="card-name">${esc(a.name)}</div>
-        <div class="card-sub">艺术家</div>
+        <div class="card-sub">${t.search_artist_label}</div>
       </div>`).join('');
     html += `</div>`;
   }
 
+  if (!html) html = `<div class="loading-text" style="color:var(--text-muted);font-size:14px">${t.search_no_results}</div>`;
   container.innerHTML = html;
   bindTrackRows(container);
 
@@ -936,17 +976,17 @@ async function doSearch(q) {
 // ── Library ─────────────────────────────────────────────────
 async function loadLibrary(forceRefresh = false) {
   const container = document.getElementById('library-content');
-  container.innerHTML = '<div class="loading-text">加载中...</div>';
+  container.innerHTML = `<div class="loading-text">${i18n[currentLang].loading}</div>`;
   const data = await fetchMyPlaylists(forceRefresh);
   if (!data) {
     const btn = document.createElement('button');
     btn.style.cssText = 'padding:7px 20px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:#fff;border-radius:20px;cursor:pointer;font-size:12px';
-    btn.textContent = '手动重试';
+    btn.textContent = i18n[currentLang].btn_retry;
     btn.addEventListener('click', () => loadLibrary(true));
     const msg = document.createElement('div');
     msg.className = 'loading-text';
     msg.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:14px';
-    msg.innerHTML = '<span style="color:var(--text-muted);font-size:13px">Spotify 每日 API 配额已耗尽</span><span style="color:var(--text-muted);font-size:12px;opacity:0.6">等配额重置后再试（约 12:50 AM）</span>';
+    msg.innerHTML = `<span style="color:var(--text-muted);font-size:13px">${i18n[currentLang].api_quota}</span><span style="color:var(--text-muted);font-size:12px;opacity:0.6">等配额重置后再试（约 12:50 AM）</span>`;
     msg.appendChild(btn);
     container.innerHTML = '';
     container.appendChild(msg);
@@ -984,7 +1024,7 @@ async function openPlaylist(id) {
   </div>`;
 
   const data = await api(`/playlists/${id}`);
-  if (!data) { container.innerHTML = '<div class="loading-text">无法加载歌单</div>'; return; }
+  if (!data) { container.innerHTML = `<div class="loading-text">${i18n[currentLang].error_playlist}</div>`; return; }
 
   // Spotify API may return tracks as "tracks" or "items" field
   const tracksPage = data.tracks || data.items;
@@ -995,16 +1035,17 @@ async function openPlaylist(id) {
   if (!allRaw.length) {
     const first = await api(`/playlists/${id}/items?limit=100`);
     if (first?.__forbidden) {
+      const pt = i18n[currentLang];
       container.innerHTML = `
         <div class="playlist-hero">
           <img src="${data.images?.[0]?.url || ''}" alt="" class="playlist-hero-img">
           <div class="playlist-hero-info">
-            <div class="playlist-type">播放列表</div>
+            <div class="playlist-type">${pt.playlist_type}</div>
             <h1>${esc(data.name)}</h1>
             ${data.description ? `<p class="playlist-desc">${data.description}</p>` : ''}
           </div>
         </div>
-        <div style="padding:40px 32px;color:var(--text-muted);font-size:14px;">此歌单的歌曲无法通过 Spotify API 获取（仅支持自建歌单）。</div>`;
+        <div style="padding:40px 32px;color:var(--text-muted);font-size:14px;">${pt.playlist_no_api_tracks}</div>`;
       return;
     }
     if (first?.items) { allRaw = first.items; nextUrl = first.next; }
@@ -1030,12 +1071,12 @@ async function openPlaylist(id) {
     <div class="playlist-hero">
       <img src="${img}" alt="" class="playlist-hero-img">
       <div class="playlist-hero-info">
-        <div class="playlist-type">播放列表</div>
+        <div class="playlist-type">${i18n[currentLang].playlist_type}</div>
         <h1>${esc(data.name)}</h1>
         ${data.description ? `<p class="playlist-desc">${data.description}</p>` : ''}
-        <p class="playlist-count">${total} 首歌曲</p>
+        <p class="playlist-count">${total} ${i18n[currentLang].playlist_tracks_suffix}</p>
         <div class="hero-actions">
-          <button class="primary-btn" id="play-all-btn">▶ 播放全部</button>
+          <button class="primary-btn" id="play-all-btn">${i18n[currentLang].play_all}</button>
           <div class="lib-view-toggle">
             <button id="plist-list-btn" class="lib-view-btn${playlistViewMode === 'list' ? ' active' : ''}" title="列表">
               <svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>
@@ -1203,7 +1244,7 @@ async function fetchLyrics(track) {
   window.electronAPI.updateMiniLyric('');
   ['npo-lyrics-lines', 'vinyl-lyrics-lines'].forEach(cid => {
     const el = document.getElementById(cid);
-    if (el) el.innerHTML = '<div class="lyric-empty">搜索歌词...</div>';
+    if (el) el.innerHTML = `<div class="lyric-empty">${i18n[currentLang].lyrics_searching}</div>`;
   });
 
   const artist = track.artists?.[0]?.name || '';
@@ -1272,7 +1313,7 @@ function renderLyricsPanel() {
     const container = document.getElementById(id);
     if (!container) return;
     if (!lyricsLines.length) {
-      container.innerHTML = '<div class="lyric-empty">暂无歌词</div>';
+      container.innerHTML = `<div class="lyric-empty">${i18n[currentLang].lyrics_empty}</div>`;
       return;
     }
     container.innerHTML = lyricsLines.map((line, i) => {
@@ -1317,7 +1358,7 @@ async function openAddToPlaylistModal(trackUri) {
   const modal = document.getElementById('add-playlist-modal');
   const listEl = document.getElementById('add-playlist-list');
   modal.classList.remove('hidden');
-  listEl.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:13px">加载中...</div>';
+  listEl.innerHTML = `<div style="padding:16px;color:var(--text-muted);font-size:13px">${i18n[currentLang].loading}</div>`;
 
   const data = await fetchMyPlaylists();
   if (!data?.items?.length) {
@@ -1337,7 +1378,7 @@ async function openAddToPlaylistModal(trackUri) {
         method: 'POST',
         body: JSON.stringify({ uris: [addPlaylistPendingUri] }),
       });
-      showToast(res !== null ? '已添加到歌单' : '添加失败');
+      showToast(res !== null ? i18n[currentLang].toast_added : i18n[currentLang].toast_add_failed);
     });
   });
 }
@@ -1442,9 +1483,10 @@ function cardHTML(track) {
 }
 
 function trackListHTML(tracks, contextUri = null) {
+  const tl = i18n[currentLang];
   return `<div class="track-list">
     <div class="track-list-header">
-      <span>#</span><span></span><span>标题</span><span>专辑</span><span>时长</span><span></span>
+      <span>#</span><span></span><span>${tl.track_col_title}</span><span>${tl.track_col_album}</span><span>${tl.track_col_duration}</span><span></span>
     </div>
     ${tracks.filter(Boolean).map((t, i) => `
       <div class="track-row${t.uri === currentTrackUri ? ' playing' : ''}"
@@ -1464,7 +1506,7 @@ function trackListHTML(tracks, contextUri = null) {
         </div>
         <div class="track-album">${esc(t.album?.name || '')}</div>
         <div class="track-duration">${msToTime(t.duration_ms)}</div>
-        <button class="track-add-btn" data-uri="${t.uri}" title="添加到歌单">
+        <button class="track-add-btn" data-uri="${t.uri}" title="${tl.track_add_title}">
           <svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
         </button>
       </div>`).join('')}
@@ -1553,7 +1595,7 @@ function renderQueueItems(items) {
         <div class="queue-title">${esc(t.name)}</div>
         <div class="queue-artist">${esc(t.artists?.[0]?.name || '')}</div>
       </div>
-      ${i === 0 ? '<div class="queue-now-tag">播放中</div>' : ''}
+      ${i === 0 ? `<div class="queue-now-tag">${i18n[currentLang].queue_now_playing}</div>` : ''}
     </div>`).join('');
   list.querySelectorAll('.queue-item:not(.queue-now)').forEach(el => {
     el.addEventListener('click', () => playTrack(el.dataset.uri, currentContextUri));
@@ -1584,13 +1626,13 @@ async function toggleQueue() {
   if (!queueOpen) return;
 
   const list = document.getElementById('queue-list');
-  list.innerHTML = '<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">加载中...</div>';
+  list.innerHTML = `<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">${i18n[currentLang].loading}</div>`;
 
   const data = await api('/me/player/queue');
-  if (!data) { list.innerHTML = '<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">无法加载队列</div>'; return; }
+  if (!data) { list.innerHTML = `<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">${i18n[currentLang].error_queue}</div>`; return; }
 
   const items = [data.currently_playing, ...(data.queue || [])].filter(t => t?.type === 'track');
-  if (!items.length) { list.innerHTML = '<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">队列为空</div>'; return; }
+  if (!items.length) { list.innerHTML = `<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">${i18n[currentLang].queue_empty}</div>`; return; }
   renderQueueItems(items);
 }
 
@@ -1612,6 +1654,72 @@ function generateAppIcon() {
   } catch {}
 }
 
+// ── Audio Features ────────────────────────────────────────────
+async function fetchAudioFeatures(trackId) {
+  if (trackId === audioFeaturesTrackId) return;
+  audioFeaturesTrackId = trackId;
+  audioFeatures = null;
+  renderAudioFeatures();
+  const data = await api(`/audio-features/${trackId}`);
+  if (trackId !== audioFeaturesTrackId) return; // stale
+  // Spotify deprecated /audio-features for apps registered after Nov 2024
+  audioFeatures = (data && !data.__forbidden) ? data : { __unavailable: true };
+  renderAudioFeatures();
+  if (normEnabled && audioFeatures.loudness != null) applyNormalization(audioFeatures.loudness);
+}
+
+function renderAudioFeatures() {
+  if (!featuresVisible) return;
+  const t = i18n[currentLang];
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const setW = (id, pct) => { const el = document.getElementById(id); if (el) el.style.width = pct + '%'; };
+
+  // Update labels (in case language changed while panel was open)
+  set('af-bpm-lbl',    t.features_bpm);
+  set('af-key-lbl',    t.features_key);
+  set('af-energy-lbl', t.features_energy);
+  set('af-valence-lbl',t.features_valence);
+  set('af-dance-lbl',  t.features_dance);
+
+  if (!audioFeatures) {
+    ['af-bpm', 'af-key', 'af-energy', 'af-valence', 'af-dance'].forEach(id => set(id, '…'));
+    ['af-energy-bar', 'af-valence-bar', 'af-dance-bar'].forEach(id => setW(id, 0));
+    return;
+  }
+  if (audioFeatures.__unavailable) {
+    set('af-bpm', '—'); set('af-key', t.features_unavailable || '不可用');
+    ['af-energy', 'af-valence', 'af-dance'].forEach(id => set(id, '—'));
+    ['af-energy-bar', 'af-valence-bar', 'af-dance-bar'].forEach(id => setW(id, 0));
+    return;
+  }
+
+  const { tempo, key, mode, energy, valence, danceability } = audioFeatures;
+  set('af-bpm', Math.round(tempo));
+  const keyName  = key >= 0 ? KEY_NAMES[key] : '—';
+  const modeName = mode === 1 ? t.features_major : t.features_minor;
+  set('af-key', key >= 0 ? `${keyName} ${modeName}` : '—');
+
+  const bars = [
+    { val: energy,      txt: 'af-energy', bar: 'af-energy-bar' },
+    { val: valence,     txt: 'af-valence', bar: 'af-valence-bar' },
+    { val: danceability,txt: 'af-dance',   bar: 'af-dance-bar' },
+  ];
+  bars.forEach(({ val, txt, bar }) => {
+    const pct = Math.round((val || 0) * 100);
+    set(txt, pct + '%');
+    setW(bar, pct);
+  });
+}
+
+const NORM_TARGET_DB = -14;
+function applyNormalization(loudness) {
+  if (!normEnabled || loudness == null) return;
+  const adjustDb = NORM_TARGET_DB - loudness;
+  const factor   = Math.pow(10, adjustDb / 20);
+  const adjusted = Math.round(Math.min(Math.max(baseVolume * factor, 1), 100));
+  api(`/me/player/volume?volume_percent=${adjusted}`, { method: 'PUT' });
+}
+
 // ── i18n ─────────────────────────────────────────────────────
 const i18n = {
   zh: {
@@ -1631,6 +1739,43 @@ const i18n = {
     settings_viz: '可视化 / Visualizer',
     viz_on: '开启', viz_off: '关闭',
     viz_note: '关闭后停止屏幕捕捉（解决 GPU 兼容问题）',
+    // Spotify launch
+    spotify_launched: 'Spotify 已在后台启动',
+    spotify_not_found: '未找到 Spotify，请手动安装或打开 Spotify 客户端',
+    spotify_starting: 'Spotify 启动中，请稍候...',
+    spotify_ready: 'Spotify 已就绪 ✓',
+    spotify_timeout: '连接超时，请手动打开 Spotify 后重试',
+    // Search
+    search_playlists: '歌单', search_tracks: '歌曲', search_artists: '艺术家',
+    search_artist_label: '艺术家', search_no_results: '无搜索结果',
+    // Loading / errors
+    loading: '加载中...', error_playlist: '无法加载歌单', error_queue: '无法加载队列',
+    btn_retry: '手动重试', api_quota: 'Spotify 每日 API 配额已耗尽',
+    // Playlist view
+    playlist_type: '播放列表', playlist_tracks_suffix: '首歌曲', play_all: '▶ 播放全部',
+    playlist_no_api_tracks: '此歌单的歌曲无法通过 Spotify API 获取（仅支持自建歌单）。',
+    // Track list
+    track_col_title: '标题', track_col_album: '专辑', track_col_duration: '时长',
+    track_add_title: '添加到歌单',
+    // Queue
+    queue_now_playing: '播放中', queue_empty: '队列为空',
+    // Lyrics
+    lyrics_searching: '搜索歌词...', lyrics_empty: '暂无歌词',
+    // Toasts
+    toast_added: '已添加到歌单', toast_add_failed: '添加失败', toast_reshuffled: '已重新随机',
+    // Close behavior
+    settings_close: '关闭行为',
+    close_tray: '最小化到托盘', close_quit: '直接退出',
+    close_note_tray: '按 × 隐藏窗口，从托盘图标可重新打开',
+    close_note_quit: '按 × 直接退出 Aura',
+    // Normalization
+    settings_norm: '响度标准化', norm_on: '开启', norm_off: '关闭',
+    norm_note: '自动均衡不同歌曲的音量差异（以 -14 dBFS 为基准）',
+    // Audio features
+    features_bpm: 'BPM', features_key: '调性', features_energy: '能量',
+    features_valence: '情绪', features_dance: '律动',
+    features_major: '大调', features_minor: '小调',
+    features_unavailable: 'Spotify API 不支持此功能',
   },
   en: {
     nav_home: 'Home', nav_search: 'Search', nav_library: 'Library',
@@ -1649,6 +1794,43 @@ const i18n = {
     settings_viz: 'Visualizer',
     viz_on: 'On', viz_off: 'Off',
     viz_note: 'Disable to stop screen capture (fixes GPU glitches)',
+    // Spotify launch
+    spotify_launched: 'Spotify launched in background',
+    spotify_not_found: 'Spotify not found. Please install or open it manually.',
+    spotify_starting: 'Starting Spotify, please wait...',
+    spotify_ready: 'Spotify ready ✓',
+    spotify_timeout: 'Connection timed out. Open Spotify manually and retry.',
+    // Search
+    search_playlists: 'Playlists', search_tracks: 'Tracks', search_artists: 'Artists',
+    search_artist_label: 'Artist', search_no_results: 'No results found',
+    // Loading / errors
+    loading: 'Loading...', error_playlist: 'Could not load playlist', error_queue: 'Could not load queue',
+    btn_retry: 'Retry', api_quota: 'Spotify daily API quota exhausted',
+    // Playlist view
+    playlist_type: 'Playlist', playlist_tracks_suffix: 'tracks', play_all: '▶ Play All',
+    playlist_no_api_tracks: 'Tracks in this playlist cannot be loaded via the Spotify API (only supported for playlists you own).',
+    // Track list
+    track_col_title: 'Title', track_col_album: 'Album', track_col_duration: 'Duration',
+    track_add_title: 'Add to playlist',
+    // Queue
+    queue_now_playing: 'Now playing', queue_empty: 'Queue is empty',
+    // Lyrics
+    lyrics_searching: 'Searching lyrics...', lyrics_empty: 'No lyrics available',
+    // Toasts
+    toast_added: 'Added to playlist', toast_add_failed: 'Failed to add', toast_reshuffled: 'Reshuffled',
+    // Close behavior
+    settings_close: 'Close Behavior',
+    close_tray: 'Minimize to tray', close_quit: 'Quit on close',
+    close_note_tray: '× hides the window — reopen from the tray icon',
+    close_note_quit: '× fully quits Aura',
+    // Normalization
+    settings_norm: 'Loudness Normalization', norm_on: 'On', norm_off: 'Off',
+    norm_note: 'Auto-levels volume across tracks (target −14 dBFS)',
+    // Audio features
+    features_bpm: 'BPM', features_key: 'Key', features_energy: 'Energy',
+    features_valence: 'Mood', features_dance: 'Dance',
+    features_major: 'Major', features_minor: 'Minor',
+    features_unavailable: 'Not available for this Spotify app',
   }
 };
 
@@ -1702,6 +1884,19 @@ function applyLang(lang) {
   document.getElementById('viz-note').textContent = t.viz_note;
   document.getElementById('viz-on-btn').textContent  = t.viz_on;
   document.getElementById('viz-off-btn').textContent = t.viz_off;
+  set('settings-close-title', t.settings_close);
+  document.getElementById('close-tray-btn').textContent = t.close_tray;
+  document.getElementById('close-quit-btn').textContent = t.close_quit;
+  document.getElementById('close-note').textContent = closeToTray ? t.close_note_tray : t.close_note_quit;
+  document.getElementById('close-tray-btn').classList.toggle('active',  closeToTray);
+  document.getElementById('close-quit-btn').classList.toggle('active', !closeToTray);
+  set('settings-norm-title', t.settings_norm);
+  document.getElementById('norm-on-btn').textContent  = t.norm_on;
+  document.getElementById('norm-off-btn').textContent = t.norm_off;
+  document.getElementById('norm-note').textContent    = t.norm_note;
+  document.getElementById('norm-on-btn')?.classList.toggle('active',  normEnabled);
+  document.getElementById('norm-off-btn')?.classList.toggle('active', !normEnabled);
+  if (featuresVisible) renderAudioFeatures();
   setGreeting();
 }
 
@@ -1760,7 +1955,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     await api('/me/player/shuffle?state=false', { method: 'PUT' });
     await api('/me/player/shuffle?state=true', { method: 'PUT' });
-    showToast('已重新随机');
+    showToast(i18n[currentLang].toast_reshuffled);
     setTimeout(() => refreshQueueContent(), 900);
   };
   document.getElementById('shuffle-btn').addEventListener('click', doShuffle);
@@ -1780,10 +1975,15 @@ document.addEventListener('DOMContentLoaded', () => {
   let volTimer;
   volSlider.addEventListener('input', () => {
     volumeLevel = parseInt(volSlider.value);
+    baseVolume  = volumeLevel;
     document.getElementById('volume-fill').style.width = volumeLevel + '%';
     clearTimeout(volTimer);
     volTimer = setTimeout(() => {
-      api(`/me/player/volume?volume_percent=${volumeLevel}`, { method: 'PUT' });
+      if (normEnabled && audioFeatures?.loudness != null) {
+        applyNormalization(audioFeatures.loudness);
+      } else {
+        api(`/me/player/volume?volume_percent=${volumeLevel}`, { method: 'PUT' });
+      }
     }, 300);
   });
 
@@ -1795,31 +1995,41 @@ document.addEventListener('DOMContentLoaded', () => {
     volSlider.dispatchEvent(new Event('input'));
   });
 
-  // Progress seek (main bar)
-  const progressBar = document.getElementById('progress-bar');
-  progressBar.addEventListener('click', async e => {
-    const rect = progressBar.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    const pos = Math.floor(pct * currentDuration);
-    clearInterval(progressInterval);
-    lastPollPos = pos;
-    lastPollTime = Date.now();
-    updateProgress(pos, currentDuration);
-    await api(`/me/player/seek?position_ms=${pos}`, { method: 'PUT' });
-  });
+  // Progress seek — shared drag logic for both bars
+  function makeSeekable(barEl) {
+    let dragging = false;
+    const calcPos = (e) => {
+      const rect = barEl.getBoundingClientRect();
+      return Math.floor(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * currentDuration);
+    };
+    const applyPos = (pos) => {
+      lastPollPos = pos; lastPollTime = Date.now();
+      updateProgress(pos, currentDuration);
+      if (lyricsLines.length) syncLyrics(pos);
+    };
+    barEl.addEventListener('mousedown', e => {
+      dragging = true;
+      clearInterval(progressInterval);
+      applyPos(calcPos(e));
+    });
+    document.addEventListener('mousemove', e => { if (dragging) applyPos(calcPos(e)); });
+    document.addEventListener('mouseup', async e => {
+      if (!dragging) return;
+      dragging = false;
+      const pos = calcPos(e);
+      applyPos(pos);
+      await api(`/me/player/seek?position_ms=${pos}`, { method: 'PUT' });
+      if (isPlaying) progressInterval = setInterval(() => {
+        const p = lastPollPos + (Date.now() - lastPollTime);
+        updateProgress(p, currentDuration);
+        if (lyricsLines.length) syncLyrics(p);
+      }, 150);
+    });
+  }
 
-  // Progress seek (NPO bar)
-  document.getElementById('npo-bar').addEventListener('click', async e => {
-    const bar = document.getElementById('npo-bar');
-    const rect = bar.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    const pos = Math.floor(pct * currentDuration);
-    clearInterval(progressInterval);
-    lastPollPos = pos;
-    lastPollTime = Date.now();
-    updateProgress(pos, currentDuration);
-    await api(`/me/player/seek?position_ms=${pos}`, { method: 'PUT' });
-  });
+  // Progress seek — both bars support click and drag
+  makeSeekable(document.getElementById('progress-bar'));
+  makeSeekable(document.getElementById('npo-bar'));
 
   // NPO 3D tilt
   const npoEl = document.getElementById('npo');
@@ -1997,12 +2207,49 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('viz-on-btn').addEventListener('click',  () => applyViz(true));
   document.getElementById('viz-off-btn').addEventListener('click', () => applyViz(false));
 
+  function applyNorm(enabled) {
+    normEnabled = enabled;
+    localStorage.setItem('normEnabled', enabled ? 'true' : 'false');
+    document.getElementById('norm-on-btn')?.classList.toggle('active',  enabled);
+    document.getElementById('norm-off-btn')?.classList.toggle('active', !enabled);
+    document.getElementById('norm-dot')?.classList.toggle('active', enabled);
+    if (enabled && audioFeatures?.loudness != null) applyNormalization(audioFeatures.loudness);
+    else if (!enabled) api(`/me/player/volume?volume_percent=${baseVolume}`, { method: 'PUT' });
+  }
+  // Init: only sync UI, no API call on startup
+  document.getElementById('norm-on-btn')?.classList.toggle('active',  normEnabled);
+  document.getElementById('norm-off-btn')?.classList.toggle('active', !normEnabled);
+  document.getElementById('norm-dot')?.classList.toggle('active', normEnabled);
+  document.getElementById('norm-on-btn')?.addEventListener('click',  () => applyNorm(true));
+  document.getElementById('norm-off-btn')?.addEventListener('click', () => applyNorm(false));
+
+  function applyCloseBehavior(tray) {
+    closeToTray = tray;
+    window.electronAPI.setCloseBehavior(tray);
+    const t = i18n[currentLang];
+    document.getElementById('close-tray-btn').classList.toggle('active',  tray);
+    document.getElementById('close-quit-btn').classList.toggle('active', !tray);
+    document.getElementById('close-note').textContent = tray ? t.close_note_tray : t.close_note_quit;
+  }
+  window.electronAPI.getCloseBehavior().then(val => { closeToTray = val; applyLang(currentLang); });
+  document.getElementById('close-tray-btn').addEventListener('click', () => applyCloseBehavior(true));
+  document.getElementById('close-quit-btn').addEventListener('click', () => applyCloseBehavior(false));
+
+  // Audio features panel toggle
+  document.getElementById('npo-features-btn').addEventListener('click', () => {
+    featuresVisible = !featuresVisible;
+    document.getElementById('npo-features-btn').classList.toggle('active', featuresVisible);
+    document.getElementById('audio-features-panel').classList.toggle('hidden', !featuresVisible);
+    if (featuresVisible) renderAudioFeatures();
+  });
+
   // Mini player buttons — show mini player overlay window
   function triggerMiniPlayer() {
-    if (currentTrackUri) window.electronAPI.showMiniPlayer({
-      title:    document.getElementById('npo-track-name')?.textContent || '—',
-      artist:   document.getElementById('npo-artist-name')?.textContent || '',
-      artUrl:   document.getElementById('npo-art')?.src || '',
+    if (!currentTrackUri) return;
+    window.electronAPI.showMiniPlayer({
+      title:    document.getElementById('now-track-name')?.textContent || '—',
+      artist:   document.getElementById('now-artist-name')?.textContent || '',
+      artUrl:   currentArtUrl || '',
       isPlaying,
     });
   }
