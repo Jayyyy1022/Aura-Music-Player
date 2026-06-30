@@ -8,6 +8,12 @@
 </head>
 <body>
 
+  <!-- Update notification bar -->
+  <div id="update-bar" class="update-bar hidden">
+    <span id="update-bar-msg"></span>
+    <button id="update-bar-btn" class="update-bar-btn hidden">立即重启安装 / Restart</button>
+  </div>
+
   <!-- Background blur layer (album art) -->
   <div id="bg-blur-layer"><img id="bg-blur-img" src="" alt=""></div>
   <!-- Hidden canvas for color extraction -->
@@ -327,6 +333,12 @@
           <button class="settings-lang-btn" id="lang-zh-btn">中文</button>
           <button class="settings-lang-btn" id="lang-en-btn">English</button>
         </div>
+        <div class="settings-section-title" id="settings-viz-title">可视化 / Visualizer</div>
+        <div class="settings-lang-row">
+          <button class="settings-lang-btn" id="viz-on-btn">开启</button>
+          <button class="settings-lang-btn" id="viz-off-btn">关闭</button>
+        </div>
+        <div class="settings-note" id="viz-note"></div>
       </div>
     </div>
   </div>

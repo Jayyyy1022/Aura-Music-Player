@@ -8,13 +8,18 @@
     "start": "electron .",
     "build": "electron-builder"
   },
+  "dependencies": {
+    "discord-rpc": "^4.0.1",
+    "electron-updater": "^6.8.9"
+  },
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^26.15.3"
   },
   "allowScripts": {
     "electron@28.3.3": true,
-    "electron-winstaller@5.4.0": true
+    "electron-winstaller@5.4.0": true,
+    "github:devsnek/node-register-scheme#e7cc9a63a1f512565da44cb57316d9fb10750e17": true
   },
   "build": {
     "appId": "com.aura.musicplayer",
@@ -24,7 +29,9 @@
       "preload.js",
       "mini-preload.js",
       "renderer/**/*",
-      "icon.ico"
+      "icon.ico",
+      "node_modules/**/*",
+      "package.json"
     ],
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
@@ -34,6 +41,11 @@
       "oneClick": true,
       "perMachine": false,
       "deleteAppDataOnUninstall": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Jayyyy1022",
+      "repo": "Aura-Music-Player"
     }
   }
 }

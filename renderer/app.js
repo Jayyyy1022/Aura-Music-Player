@@ -44,8 +44,9 @@ let cachedAccentRgb = [168, 85, 247];
 let lastVizFrameTime = 0;
 
 // ── Performance Mode ─────────────────────────────────────────
-let perfMode = localStorage.getItem('perfMode') || 'high'; // 'high' | 'low'
-let currentLang = localStorage.getItem('lang') || 'zh';    // 'zh' | 'en'
+let perfMode   = localStorage.getItem('perfMode')   || 'high'; // 'high' | 'low'
+let currentLang = localStorage.getItem('lang')      || 'zh';  // 'zh' | 'en'
+let vizEnabled  = localStorage.getItem('vizEnabled') !== 'false'; // default true
 
 // ── Spotify API ────────────────────────────────────────────
 let rateLimitedUntil = 0;
@@ -351,12 +352,11 @@ async function pollPlayback() {
   document.getElementById('npo-artist-name').textContent =
     track.artists?.map(a => a.name).join(', ') || '';
 
-  window.electronAPI.updateMiniPlayer({
-    title: track.name,
-    artist: track.artists?.map(a => a.name).join(', ') || '',
-    artUrl: track.album?.images?.[0]?.url || '',
-    isPlaying,
-  });
+  const trackArtist = track.artists?.map(a => a.name).join(', ') || '';
+  const trackArtUrl = track.album?.images?.[0]?.url || '';
+  window.electronAPI.updateMiniPlayer({ title: track.name, artist: trackArtist, artUrl: trackArtUrl, isPlaying });
+  window.electronAPI.updateTray({ title: track.name, artist: trackArtist, isPlaying });
+  window.electronAPI.updateDiscord({ title: track.name, artist: trackArtist, artUrl: trackArtUrl, isPlaying, positionMs: state.progress_ms || 0, durationMs: track.duration_ms || 0 });
 
   if (dir !== 0 || (prevUri !== null && prevUri !== currentTrackUri)) {
     skipDir = 0;
@@ -781,7 +781,7 @@ async function openNPO() {
   document.getElementById('npo').classList.add('npo-open');
   npoOpen = true;
   spawnOrbs();
-  await initVisualizer();
+  if (vizEnabled) await initVisualizer();
   if (isPlaying) startViz();
 }
 
@@ -1628,6 +1628,9 @@ const i18n = {
     perf_note_low: '下次打开 NPO / 黑胶时生效',
     greeting_night: '深夜好', greeting_morning: '早上好',
     greeting_afternoon: '下午好', greeting_evening: '晚上好',
+    settings_viz: '可视化 / Visualizer',
+    viz_on: '开启', viz_off: '关闭',
+    viz_note: '关闭后停止屏幕捕捉（解决 GPU 兼容问题）',
   },
   en: {
     nav_home: 'Home', nav_search: 'Search', nav_library: 'Library',
@@ -1643,6 +1646,9 @@ const i18n = {
     perf_note_low: 'Takes effect on next NPO / vinyl open',
     greeting_night: 'Good night', greeting_morning: 'Good morning',
     greeting_afternoon: 'Good afternoon', greeting_evening: 'Good evening',
+    settings_viz: 'Visualizer',
+    viz_on: 'On', viz_off: 'Off',
+    viz_note: 'Disable to stop screen capture (fixes GPU glitches)',
   }
 };
 
@@ -1690,6 +1696,12 @@ function applyLang(lang) {
   title('sidebar-toggle', t.sidebar_toggle);
   const perfNote = document.getElementById('perf-note');
   if (perfNote?.textContent) perfNote.textContent = t.perf_note_low;
+  set('settings-viz-title', t.settings_viz);
+  document.getElementById('viz-on-btn')?.classList.toggle('active',  vizEnabled);
+  document.getElementById('viz-off-btn')?.classList.toggle('active', !vizEnabled);
+  document.getElementById('viz-note').textContent = t.viz_note;
+  document.getElementById('viz-on-btn').textContent  = t.viz_on;
+  document.getElementById('viz-off-btn').textContent = t.viz_off;
   setGreeting();
 }
 
@@ -1974,6 +1986,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('lang-zh-btn').addEventListener('click', () => applyLang('zh'));
   document.getElementById('lang-en-btn').addEventListener('click', () => applyLang('en'));
 
+  function applyViz(enabled) {
+    vizEnabled = enabled;
+    localStorage.setItem('vizEnabled', enabled);
+    document.getElementById('viz-on-btn').classList.toggle('active',  enabled);
+    document.getElementById('viz-off-btn').classList.toggle('active', !enabled);
+    if (!enabled) stopViz();
+  }
+  applyViz(vizEnabled);
+  document.getElementById('viz-on-btn').addEventListener('click',  () => applyViz(true));
+  document.getElementById('viz-off-btn').addEventListener('click', () => applyViz(false));
+
   // Mini player buttons — show mini player overlay window
   function triggerMiniPlayer() {
     if (currentTrackUri) window.electronAPI.showMiniPlayer({
@@ -1989,13 +2012,29 @@ document.addEventListener('DOMContentLoaded', () => {
     triggerMiniPlayer();
   });
 
-  // Mini player actions from the system overlay window
-  window.electronAPI.onMiniAction(type => {
+  // Mini player / tray / global hotkey actions — all share same handlers
+  function handlePlayerAction(type) {
     if (type === 'play-pause') togglePlayPause();
-    if (type === 'open-npo') openNPO();
-    if (type === 'prev') skipPrev();
-    if (type === 'next') skipNext();
+    if (type === 'open-npo')   openNPO();
+    if (type === 'prev')       skipPrev();
+    if (type === 'next')       skipNext();
+  }
+  window.electronAPI.onMiniAction(handlePlayerAction);
+  window.electronAPI.onTrayAction(handlePlayerAction);
+  window.electronAPI.onHotkey(handlePlayerAction);
+
+  // Auto-updater notifications
+  window.electronAPI.onUpdateAvailable(() => {
+    document.getElementById('update-bar').classList.remove('hidden');
+    document.getElementById('update-bar-msg').textContent = currentLang === 'zh' ? '🔄 新版本下载中...' : '🔄 Downloading update...';
   });
+  window.electronAPI.onUpdateDownloaded(() => {
+    const bar = document.getElementById('update-bar');
+    bar.classList.remove('hidden');
+    document.getElementById('update-bar-msg').textContent = currentLang === 'zh' ? '✅ 新版本已就绪' : '✅ Update ready';
+    document.getElementById('update-bar-btn').classList.remove('hidden');
+  });
+  document.getElementById('update-bar-btn')?.addEventListener('click', () => window.electronAPI.installUpdate());
 
   setupSearch();
   init();

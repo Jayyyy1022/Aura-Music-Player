@@ -795,6 +795,39 @@ body {
 /* ─── Utility ────────────────────────────────── */
 .hidden { display: none !important; }
 
+/* ─── Update Bar ─────────────────────────────── */
+.update-bar {
+  position: fixed;
+  bottom: calc(var(--player-h) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 30, 40, 0.96);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text);
+  z-index: 9998;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  white-space: nowrap;
+}
+.update-bar-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.update-bar-btn:hover { opacity: 0.85; }
+
 /* ─── Toast ──────────────────────────────────── */
 .toast {
   position: fixed;

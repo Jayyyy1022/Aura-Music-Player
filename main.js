@@ -1,4 +1,6 @@
-const { app, BrowserWindow, ipcMain, shell, desktopCapturer, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, desktopCapturer, screen, Tray, Menu, globalShortcut, nativeImage } = require('electron');
+const { autoUpdater } = require('electron-updater');
+let DiscordRPC; try { DiscordRPC = require('discord-rpc'); } catch {}
 const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
@@ -7,9 +9,15 @@ const { exec, spawn } = require('child_process');
 
 process.on('unhandledRejection', () => {});
 
+// ── Discord Application ID ─────────────────────────────────────
+// Create a Discord app at discord.com/developers/applications, then paste the Application ID here:
+const DISCORD_CLIENT_ID = '';
 
 let mainWindow;
 let miniPlayerWindow;
+let tray = null;
+let isQuitting = false;
+let rpc = null;
 let authServer;
 let codeVerifier;
 let tokens = {};
@@ -59,6 +67,46 @@ const SCOPES = [
   'user-top-read',
   'user-read-recently-played',
 ].join(' ');
+
+// ── Tray ──────────────────────────────────────────────────────
+function createTray() {
+  try {
+    tray = new Tray(path.join(__dirname, 'icon.ico'));
+  } catch {
+    tray = new Tray(nativeImage.createEmpty());
+  }
+  tray.setToolTip('Aura');
+  tray.on('click', () => {
+    if (mainWindow?.isVisible()) mainWindow.hide();
+    else { mainWindow?.show(); mainWindow?.focus(); }
+  });
+  updateTrayMenu({ isPlaying: false, title: '', artist: '' });
+}
+
+function updateTrayMenu({ isPlaying, title, artist }) {
+  if (!tray) return;
+  const menu = Menu.buildFromTemplate([
+    { label: title || 'Aura', enabled: false },
+    ...(artist ? [{ label: artist, enabled: false }] : []),
+    { type: 'separator' },
+    { label: isPlaying ? '⏸  Pause' : '▶  Play', click: () => mainWindow?.webContents.send('tray:action', 'play-pause') },
+    { label: '⏮  Previous',                        click: () => mainWindow?.webContents.send('tray:action', 'prev') },
+    { label: '⏭  Next',                             click: () => mainWindow?.webContents.send('tray:action', 'next') },
+    { type: 'separator' },
+    { label: 'Show / Hide', click: () => mainWindow?.isVisible() ? mainWindow.hide() : mainWindow?.show() },
+    { label: 'Quit Aura',   click: () => { isQuitting = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(menu);
+}
+
+// ── Discord RPC ───────────────────────────────────────────────
+function initDiscord() {
+  if (!DISCORD_CLIENT_ID || !DiscordRPC) return;
+  DiscordRPC.register(DISCORD_CLIENT_ID);
+  rpc = new DiscordRPC.Client({ transport: 'ipc' });
+  rpc.on('ready', () => console.log('[Discord] RPC ready'));
+  rpc.login({ clientId: DISCORD_CLIENT_ID }).catch(() => {});
+}
 
 function createWindow() {
   const iconPath = path.join(__dirname, 'icon.ico');
@@ -131,7 +179,30 @@ app.whenReady().then(() => {
   tokens = loadTokens() || {};
   createWindow();
   createMiniPlayerWindow();
-  mainWindow.on('closed', () => { miniPlayerWindow?.destroy(); });
+  createTray();
+  initDiscord();
+
+  // Close button hides to tray instead of quitting
+  app.on('before-quit', () => { isQuitting = true; });
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) { e.preventDefault(); mainWindow.hide(); }
+    else { miniPlayerWindow?.destroy(); }
+  });
+
+  // Global hotkeys (Ctrl+Alt+←/Space/→)
+  globalShortcut.register('CmdOrCtrl+Alt+Space', () => mainWindow?.webContents.send('hotkey', 'play-pause'));
+  globalShortcut.register('CmdOrCtrl+Alt+Right', () => mainWindow?.webContents.send('hotkey', 'next'));
+  globalShortcut.register('CmdOrCtrl+Alt+Left',  () => mainWindow?.webContents.send('hotkey', 'prev'));
+
+  // Auto-updater
+  autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  autoUpdater.on('update-available',  () => mainWindow?.webContents.send('update:available'));
+  autoUpdater.on('update-downloaded', () => mainWindow?.webContents.send('update:downloaded'));
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  rpc?.destroy().catch(() => {});
 });
 
 app.on('window-all-closed', () => {
@@ -263,6 +334,27 @@ ipcMain.on('window-close', () => mainWindow?.close());
 ipcMain.on('window-fullscreen', () => {
   if (!mainWindow) return;
   mainWindow.setFullScreen(!mainWindow.isFullScreen());
+});
+
+// ── Tray / Hotkey / Updater / Discord IPC ────────────────
+ipcMain.on('tray:update',    (_, data) => updateTrayMenu(data));
+ipcMain.on('update:install', ()        => autoUpdater.quitAndInstall());
+ipcMain.on('discord:update', (_, d)    => {
+  if (!rpc?.user) return;
+  try {
+    const now = Date.now();
+    rpc.setActivity({
+      details:        d.title  || 'Aura',
+      state:          d.artist ? `by ${d.artist}` : undefined,
+      startTimestamp: d.isPlaying ? now - (d.positionMs || 0) : undefined,
+      endTimestamp:   d.isPlaying && d.durationMs ? now - (d.positionMs || 0) + d.durationMs : undefined,
+      largeImageKey:  d.artUrl || 'aura',
+      largeImageText: 'Aura Music Player',
+      smallImageKey:  d.isPlaying ? 'play' : 'pause',
+      smallImageText: d.isPlaying ? 'Playing' : 'Paused',
+      instance: false,
+    });
+  } catch {}
 });
 
 // ── Mini Player IPC ───────────────────────────────────────
