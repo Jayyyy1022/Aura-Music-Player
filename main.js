@@ -494,33 +494,77 @@ ipcMain.handle('fetch-lyrics', async (_, trackId, token, meta) => {
     );
     if (res.ok) {
       const d = await res.json();
-      if (d?.lyrics?.lines?.length) return { source: 'spotify', data: d };
+      if (d?.lyrics?.lines?.length) {
+        console.log('[Lyrics] spotify ok');
+        return { source: 'spotify', data: d };
+      }
+    } else {
+      console.log('[Lyrics] spotify', res.status);
     }
-  } catch {}
+  } catch (e) { console.log('[Lyrics] spotify err:', e.message); }
 
-  // 2. lrclib fallback (Node fetch — no CORS/CSP constraints)
   if (!meta) return null;
   const { artist, title, album, duration } = meta;
+  console.log(`[Lyrics] trying lrclib for "${title}" - "${artist}"`);
+
   const ea = encodeURIComponent(artist), et = encodeURIComponent(title),
         eal = encodeURIComponent(album);
-  const tryFetch = async (url) => {
+
+  // 2. lrclib (3 strategies in parallel, retry once on failure)
+  const tryFetch = async (url, timeoutMs = 8000) => {
     try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
-      if (!r.ok) return null;
+      const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!r.ok) { console.log('[Lyrics] lrclib', r.status, url); return null; }
       const d = await r.json();
       if (Array.isArray(d)) return d.find(x => x.syncedLyrics) || d[0] || null;
       return (d?.syncedLyrics || d?.plainLyrics) ? d : null;
-    } catch { return null; }
+    } catch (e) { console.log('[Lyrics] lrclib err:', e.message, url); return null; }
   };
-  const [exact, short_, search] = await Promise.all([
+
+  let [exact, short_, search] = await Promise.all([
     tryFetch(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}&album_name=${eal}&duration=${duration}`),
     tryFetch(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}`),
     tryFetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + ' ' + title)}`),
   ]);
-  const lrc = [exact, short_, search].find(l => l?.syncedLyrics)
-           || [exact, short_, search].find(l => l?.plainLyrics)
-           || null;
-  if (lrc) return { source: 'lrclib', syncedLyrics: lrc.syncedLyrics || null, plainLyrics: lrc.plainLyrics || null };
+  let lrc = [exact, short_, search].find(l => l?.syncedLyrics)
+         || [exact, short_, search].find(l => l?.plainLyrics)
+         || null;
+
+  // Retry once after 1.5s if all failed (lrclib sometimes flaky)
+  if (!lrc) {
+    console.log('[Lyrics] lrclib round 1 failed, retrying...');
+    await new Promise(r => setTimeout(r, 1500));
+    [exact, short_, search] = await Promise.all([
+      tryFetch(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}&album_name=${eal}&duration=${duration}`),
+      tryFetch(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}`),
+      tryFetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + ' ' + title)}`),
+    ]);
+    lrc = [exact, short_, search].find(l => l?.syncedLyrics)
+       || [exact, short_, search].find(l => l?.plainLyrics)
+       || null;
+  }
+
+  if (lrc) {
+    console.log('[Lyrics] lrclib ok, synced:', !!lrc.syncedLyrics);
+    return { source: 'lrclib', syncedLyrics: lrc.syncedLyrics || null, plainLyrics: lrc.plainLyrics || null };
+  }
+
+  // 3. lyrics.ovh fallback (plain lyrics only)
+  try {
+    const r = await fetch(
+      `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (r.ok) {
+      const d = await r.json();
+      if (d?.lyrics?.trim()) {
+        console.log('[Lyrics] lyrics.ovh ok');
+        return { source: 'lrclib', syncedLyrics: null, plainLyrics: d.lyrics };
+      }
+    }
+  } catch (e) { console.log('[Lyrics] lyrics.ovh err:', e.message); }
+
+  console.log('[Lyrics] all sources failed');
   return null;
 });
 
