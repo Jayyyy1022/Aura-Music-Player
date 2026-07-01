@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   login:         ()    => ipcRenderer.invoke('spotify-login'),
   refreshToken:  ()    => ipcRenderer.invoke('refresh-token'),
   logout:        ()    => ipcRenderer.invoke('logout'),
-  fetchLyrics:   (id, tok) => ipcRenderer.invoke('fetch-lyrics', id, tok),
+  fetchLyrics:   (id, tok, meta) => ipcRenderer.invoke('fetch-lyrics', id, tok, meta),
   launchSpotify: ()    => ipcRenderer.invoke('launch-spotify'),
   minimize:      ()    => ipcRenderer.send('window-minimize'),
   maximize:      ()    => ipcRenderer.send('window-maximize'),

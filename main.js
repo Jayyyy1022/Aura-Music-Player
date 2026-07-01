@@ -485,15 +485,43 @@ function isSpotifyRunning() {
   });
 }
 
-ipcMain.handle('fetch-lyrics', async (_, trackId, token) => {
+ipcMain.handle('fetch-lyrics', async (_, trackId, token, meta) => {
+  // 1. Spotify private lyrics API
   try {
     const res = await fetch(
       `https://spclient.wg.spotify.com/color-lyrics/v2/track/${trackId}?format=json&vocalRemoval=false&market=from_token`,
       { headers: { 'Authorization': `Bearer ${token}`, 'App-Platform': 'WebPlayer' }, signal: AbortSignal.timeout(5000) }
     );
-    if (!res.ok) return null;
-    return res.json();
-  } catch { return null; }
+    if (res.ok) {
+      const d = await res.json();
+      if (d?.lyrics?.lines?.length) return { source: 'spotify', data: d };
+    }
+  } catch {}
+
+  // 2. lrclib fallback (Node fetch — no CORS/CSP constraints)
+  if (!meta) return null;
+  const { artist, title, album, duration } = meta;
+  const ea = encodeURIComponent(artist), et = encodeURIComponent(title),
+        eal = encodeURIComponent(album);
+  const tryFetch = async (url) => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (Array.isArray(d)) return d.find(x => x.syncedLyrics) || d[0] || null;
+      return (d?.syncedLyrics || d?.plainLyrics) ? d : null;
+    } catch { return null; }
+  };
+  const [exact, short_, search] = await Promise.all([
+    tryFetch(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}&album_name=${eal}&duration=${duration}`),
+    tryFetch(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}`),
+    tryFetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + ' ' + title)}`),
+  ]);
+  const lrc = [exact, short_, search].find(l => l?.syncedLyrics)
+           || [exact, short_, search].find(l => l?.plainLyrics)
+           || null;
+  if (lrc) return { source: 'lrclib', syncedLyrics: lrc.syncedLyrics || null, plainLyrics: lrc.plainLyrics || null };
+  return null;
 });
 
 ipcMain.handle('launch-spotify', async () => {

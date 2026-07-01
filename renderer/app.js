@@ -1429,47 +1429,26 @@ async function fetchLyrics(track) {
   const artist = track.artists?.[0]?.name || '';
   const title = (track.name || '').replace(/\s*[-–]\s*(remaster\w*|radio edit|single version|live\b.*)/i, '').trim();
   const album = track.album?.name || '';
-  const dur = Math.round((track.duration_ms || 0) / 1000);
-  const ea = encodeURIComponent(artist), et = encodeURIComponent(title), eal = encodeURIComponent(album);
+  const duration = Math.round((track.duration_ms || 0) / 1000);
 
   const stale = () => myGen !== lyricsGen;
 
-  // 1. Spotify private lyrics API via IPC (no CORS in main process)
+  // All fetching done in main process (Node.js) — no CSP/CORS constraints
   try {
-    const data = await window.electronAPI.fetchLyrics(id, accessToken);
+    const result = await window.electronAPI.fetchLyrics(id, accessToken, { artist, title, album, duration });
     if (stale()) return;
-    if (data?.lyrics?.lines?.length) {
-      const synced = data.lyrics.syncType === 'LINE_SYNCED';
-      const lines = data.lyrics.lines
+    if (result?.source === 'spotify') {
+      const d = result.data;
+      const synced = d.lyrics.syncType === 'LINE_SYNCED';
+      const lines = d.lyrics.lines
         .map(l => ({ time: synced ? parseInt(l.startTimeMs) / 1000 : -1, text: l.words }))
         .filter(l => l.text && l.text !== '♪');
       if (lines.length) { lyricsLines = lines; renderLyricsPanel(); return; }
+    } else if (result?.source === 'lrclib') {
+      if (result.syncedLyrics) lyricsLines = parseLRC(result.syncedLyrics);
+      else if (result.plainLyrics) lyricsLines = result.plainLyrics.split('\n').filter(Boolean).map(text => ({ time: -1, text }));
     }
   } catch {}
-  if (stale()) return;
-
-  // 2. lrclib — 3 strategies in parallel (whichever returns synced wins)
-  const fetchWithTimeout = async (url, ms = 6000) => {
-    try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(ms) });
-      if (!r.ok) return null;
-      const d = await r.json();
-      if (Array.isArray(d)) return d.find(x => x.syncedLyrics) || d[0] || null;
-      return (d?.syncedLyrics || d?.plainLyrics) ? d : null;
-    } catch { return null; }
-  };
-  const [lrcExact, lrcShort, lrcSearch] = await Promise.all([
-    fetchWithTimeout(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}&album_name=${eal}&duration=${dur}`),
-    fetchWithTimeout(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}`),
-    fetchWithTimeout(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + ' ' + title)}`),
-  ]);
-  if (stale()) return;
-  // Prefer synced over plain, exact match over looser
-  const lrc = [lrcExact, lrcShort, lrcSearch].find(l => l?.syncedLyrics)
-           || [lrcExact, lrcShort, lrcSearch].find(l => l?.plainLyrics)
-           || null;
-  if (lrc?.syncedLyrics) lyricsLines = parseLRC(lrc.syncedLyrics);
-  else if (lrc?.plainLyrics) lyricsLines = lrc.plainLyrics.split('\n').filter(Boolean).map(text => ({ time: -1, text }));
   if (stale()) return;
 
   renderLyricsPanel();
