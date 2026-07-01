@@ -1,6 +1,6 @@
 {
   "name": "aura-music-player",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "A desktop music player powered by Spotify Connect",
   "main": "main.js",
   "author": "Jayyyy1022",
