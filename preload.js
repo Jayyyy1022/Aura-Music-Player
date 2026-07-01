@@ -28,4 +28,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateDiscord:      (data) => ipcRenderer.send('discord:update',   data),
   setCloseBehavior:   (val)  => ipcRenderer.send('set-close-to-tray', val),
   getCloseBehavior:   ()     => ipcRenderer.invoke('get-close-to-tray'),
+  showImmersive:           (d) => ipcRenderer.send('immersive:show', d),
+  hideImmersive:           ()  => ipcRenderer.send('immersive:hide'),
+  updateImmersive:         (d) => ipcRenderer.send('immersive:update', d),
+  updateImmersiveLyrics:   (d) => ipcRenderer.send('immersive:lyrics', d),
+  updateImmersiveProgress: (d) => ipcRenderer.send('immersive:progress', d),
+  updateImmersiveQueue:    (d) => ipcRenderer.send('immersive:queue', d),
+  setImmersiveGlassMode:   (m) => ipcRenderer.send('immersive:glass-mode', m),
+  onImmersiveAction:       (cb) => ipcRenderer.on('immersive:action', (_, t) => cb(t)),
 });

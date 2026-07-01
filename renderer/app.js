@@ -41,6 +41,21 @@ let cachedPlaylistTracks = [];
 let cachedPlaylistUri = '';
 let cachedMyPlaylists = null;
 let currentContextUri = null; // tracks the active Spotify context URI
+let immersivePlayHistory = []; // played tracks (newest first), max 5
+let lastTrackInfo = null;      // snapshot of current track before it changes
+
+function buildImmersiveQueue(qData) {
+  const queueItems = [qData.currently_playing, ...(qData.queue || [])]
+    .filter(t => t?.type === 'track')
+    .map(t => ({
+      uri: t.uri, name: t.name,
+      artist: t.artists?.[0]?.name || '',
+      artUrl: t.album?.images?.[1]?.url || t.album?.images?.[0]?.url || '',
+      isCurrent: t.uri === currentTrackUri,
+    }));
+  const historyItems = immersivePlayHistory.map(t => ({ ...t, isCurrent: false }));
+  return [...historyItems, ...queueItems];
+}
 let cachedMyPlaylistsAt = 0;
 let lyricsLines = [];       // [{time, text}]
 let currentLyricIdx = -1;
@@ -66,15 +81,8 @@ let lastVizFrameTime = 0;
 let perfMode   = localStorage.getItem('perfMode')   || 'high'; // 'high' | 'low'
 let currentLang = localStorage.getItem('lang')      || 'zh';  // 'zh' | 'en'
 let vizEnabled  = localStorage.getItem('vizEnabled') !== 'false'; // default true
-let normEnabled  = localStorage.getItem('normEnabled') === 'true'; // default off
-let baseVolume   = 70; // user's intended volume (decoupled from normalization adjustments)
 let closeToTray  = true; // synced from main process on init
 
-// ── Audio Features ────────────────────────────────────────────
-let audioFeatures = null;
-let audioFeaturesTrackId = '';
-let featuresVisible = false;
-const KEY_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 
 // ── Spotify API ────────────────────────────────────────────
 let rateLimitedUntil = 0;
@@ -340,6 +348,10 @@ async function pollPlayback() {
 
   const track = state.item;
   const prevUri = currentTrackUri;
+  if (prevUri && prevUri !== track.uri && lastTrackInfo) {
+    immersivePlayHistory.unshift({ ...lastTrackInfo });
+    if (immersivePlayHistory.length > 5) immersivePlayHistory.pop();
+  }
   currentTrackUri = track.uri;
   currentDuration = track.duration_ms;
   isPlaying = state.is_playing;
@@ -370,7 +382,17 @@ async function pollPlayback() {
 
     document.getElementById('npo-art').src = img;
     document.getElementById('npo-bg-img').src = img;
+
+    const heroBg = document.getElementById('hero-bg');
+    const heroArt = document.getElementById('hero-art');
+    if (heroBg) heroBg.style.backgroundImage = `url('${img}')`;
+    if (heroArt) heroArt.src = img;
   }
+
+  const heroTitle = document.getElementById('hero-title');
+  const heroArtist = document.getElementById('hero-artist');
+  if (heroTitle) heroTitle.textContent = track.name || '—';
+  if (heroArtist) heroArtist.textContent = track.artists?.map(a => a.name).join(', ') || '—';
 
   document.getElementById('now-track-name').textContent = track.name;
   document.getElementById('now-artist-name').textContent =
@@ -382,7 +404,13 @@ async function pollPlayback() {
 
   const trackArtist = track.artists?.map(a => a.name).join(', ') || '';
   const trackArtUrl = track.album?.images?.[0]?.url || '';
+  lastTrackInfo = {
+    uri: track.uri, name: track.name,
+    artist: track.artists?.[0]?.name || '',
+    artUrl: track.album?.images?.[1]?.url || track.album?.images?.[0]?.url || '',
+  };
   window.electronAPI.updateMiniPlayer({ title: track.name, artist: trackArtist, artUrl: trackArtUrl, isPlaying });
+  window.electronAPI.updateImmersive({ title: track.name, artist: trackArtist, artUrl: trackArtUrl, isPlaying, duration_ms: currentDuration });
   window.electronAPI.updateTray({ title: track.name, artist: trackArtist, isPlaying });
   window.electronAPI.updateDiscord({ title: track.name, artist: trackArtist, artUrl: trackArtUrl, isPlaying, positionMs: state.progress_ms || 0, durationMs: track.duration_ms || 0 });
 
@@ -403,14 +431,11 @@ async function pollPlayback() {
   document.getElementById('repeat-icon').classList.toggle('hidden', repeatMode === 2);
   document.getElementById('repeat-one-icon').classList.toggle('hidden', repeatMode !== 2);
 
-  if (!normEnabled) {
-    const vol = state.device?.volume_percent ?? volumeLevel;
-    if (vol !== volumeLevel) {
-      volumeLevel = vol;
-      baseVolume  = vol;
-      document.getElementById('volume-slider').value = vol;
-      document.getElementById('volume-fill').style.width = vol + '%';
-    }
+  const vol = state.device?.volume_percent ?? volumeLevel;
+  if (vol !== volumeLevel) {
+    volumeLevel = vol;
+    document.getElementById('volume-slider').value = vol;
+    document.getElementById('volume-fill').style.width = vol + '%';
   }
 
   lastPollPos = state.progress_ms || 0;
@@ -423,6 +448,7 @@ async function pollPlayback() {
       const pos = lastPollPos + (Date.now() - lastPollTime);
       updateProgress(pos, currentDuration);
       if (lyricsLines.length) syncLyrics(pos);
+      window.electronAPI.updateImmersiveProgress({ ms: pos, idx: currentLyricIdx });
     }, 150);
   }
 
@@ -450,7 +476,6 @@ async function pollPlayback() {
       if (prevEl) prevEl.src = vinylPrevArt;
     }
     fetchLyrics(track);
-    fetchAudioFeatures(track.id);
   }
   // Sync tonearm with play state when vinyl overlay is open
   try {
@@ -465,6 +490,14 @@ async function pollPlayback() {
 
   // Auto-refresh queue panel when track changes
   if (queueOpen && prevUri !== currentTrackUri) refreshQueueContent();
+
+  // Refresh immersive carousel when track changes
+  if (prevUri !== currentTrackUri) {
+    setTimeout(async () => {
+      const qData = await api('/me/player/queue');
+      if (qData) window.electronAPI.updateImmersiveQueue({ queue: buildImmersiveQueue(qData) });
+    }, 800);
+  }
 
   // Update vinyl overlay if open
   // Update vinyl overlay info when track changes while overlay is open
@@ -815,6 +848,7 @@ function drawModeVortex(ctx, W, H, data, r, g, b) {
 // ── Now Playing Overlay ──────────────────────────────────────
 async function openNPO() {
   window.electronAPI.hideMiniPlayer();
+  window.electronAPI.hideImmersive();
   document.getElementById('npo').classList.add('npo-open');
   npoOpen = true;
   spawnOrbs();
@@ -952,7 +986,7 @@ async function doSearch(q) {
   if (data.artists?.items?.length) {
     html += `<h3 class="results-section-title">${t.search_artists}</h3><div class="card-grid">`;
     html += data.artists.items.slice(0, 5).map(a => `
-      <div class="card">
+      <div class="card" data-artist-id="${a.id}">
         <img src="${a.images?.[0]?.url || ''}" alt="" class="card-img artist-img">
         <div class="card-name">${esc(a.name)}</div>
         <div class="card-sub">${t.search_artist_label}</div>
@@ -970,6 +1004,10 @@ async function doSearch(q) {
   });
   container.querySelectorAll('.card-play-btn[data-playlist-id]').forEach(btn => {
     btn.addEventListener('click', e => { e.stopPropagation(); openPlaylist(btn.dataset.playlistId); });
+  });
+  // 点艺人卡片打开艺人页
+  container.querySelectorAll('.card[data-artist-id]').forEach(card => {
+    card.addEventListener('click', () => openArtist(card.dataset.artistId));
   });
 }
 
@@ -1305,6 +1343,7 @@ async function fetchLyrics(track) {
 }
 
 function renderLyricsPanel() {
+  window.electronAPI.updateImmersiveLyrics({ lines: lyricsLines, idx: currentLyricIdx });
   const panels = [
     { id: 'npo-lyrics-lines', visible: lyricsVisible },
     { id: 'vinyl-lyrics-lines', visible: vinylLyricsVisible },
@@ -1535,6 +1574,63 @@ function bindTrackRows(container, contextUri = null) {
   });
 }
 
+// ── Artist Page ─────────────────────────────────────────────
+async function openArtist(id) {
+  switchView('artist');
+  const container = document.getElementById('artist-detail');
+  container.innerHTML = `<div class="loading-text">${i18n[currentLang].loading}</div>`;
+
+  const [artist, topData, albumData] = await Promise.all([
+    api(`/artists/${id}`),
+    api(`/artists/${id}/top-tracks?market=from_token`),
+    api(`/artists/${id}/albums?limit=12&include_groups=album,single`),
+  ]);
+  if (!artist) { container.innerHTML = `<div class="loading-text">加载失败</div>`; return; }
+
+  const img = artist.images?.[0]?.url || '';
+  const followers = (artist.followers?.total || 0).toLocaleString();
+  const topTracks = topData?.tracks?.slice(0, 10) || [];
+  const albums = albumData?.items || [];
+
+  container.innerHTML = `
+    <div class="artist-hero">
+      <div class="artist-hero-bg" style="background-image:url('${img}')"></div>
+      <div class="artist-hero-gradient"></div>
+      <div class="artist-hero-content">
+        <img class="artist-avatar" src="${img}" alt="">
+        <div class="artist-hero-info">
+          <div class="artist-type">艺术家</div>
+          <div class="artist-name">${esc(artist.name)}</div>
+          <div class="artist-followers">${followers} 粉丝</div>
+        </div>
+      </div>
+    </div>
+    <div class="artist-body">
+      ${topTracks.length ? `<section class="content-section"><h2>热门歌曲</h2>${trackListHTML(topTracks)}</section>` : ''}
+      ${albums.length ? `
+        <section class="content-section">
+          <h2>专辑 &amp; 单曲</h2>
+          <div class="card-grid">
+            ${albums.map(a => `
+              <div class="card" data-album-id="${a.id}" data-ctx="${a.uri}">
+                <img src="${a.images?.[0]?.url || ''}" alt="" class="card-img">
+                <div class="card-name">${esc(a.name)}</div>
+                <div class="card-sub">${(a.release_date || '').slice(0, 4)} · ${a.album_type === 'single' ? '单曲' : '专辑'}</div>
+                <button class="card-play-btn" data-uri="${a.uri}">▶</button>
+              </div>`).join('')}
+          </div>
+        </section>` : ''}
+    </div>`;
+
+  bindTrackRows(container);
+  container.querySelectorAll('.card[data-album-id]').forEach(card => {
+    card.addEventListener('click', () => openPlaylist(card.dataset.albumId));
+  });
+  container.querySelectorAll('.card-play-btn[data-uri]').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); playTrack(btn.dataset.uri); });
+  });
+}
+
 // ── Navigation ───────────────────────────────────────────────
 function switchView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -1654,71 +1750,6 @@ function generateAppIcon() {
   } catch {}
 }
 
-// ── Audio Features ────────────────────────────────────────────
-async function fetchAudioFeatures(trackId) {
-  if (trackId === audioFeaturesTrackId) return;
-  audioFeaturesTrackId = trackId;
-  audioFeatures = null;
-  renderAudioFeatures();
-  const data = await api(`/audio-features/${trackId}`);
-  if (trackId !== audioFeaturesTrackId) return; // stale
-  // Spotify deprecated /audio-features for apps registered after Nov 2024
-  audioFeatures = (data && !data.__forbidden) ? data : { __unavailable: true };
-  renderAudioFeatures();
-  if (normEnabled && audioFeatures.loudness != null) applyNormalization(audioFeatures.loudness);
-}
-
-function renderAudioFeatures() {
-  if (!featuresVisible) return;
-  const t = i18n[currentLang];
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  const setW = (id, pct) => { const el = document.getElementById(id); if (el) el.style.width = pct + '%'; };
-
-  // Update labels (in case language changed while panel was open)
-  set('af-bpm-lbl',    t.features_bpm);
-  set('af-key-lbl',    t.features_key);
-  set('af-energy-lbl', t.features_energy);
-  set('af-valence-lbl',t.features_valence);
-  set('af-dance-lbl',  t.features_dance);
-
-  if (!audioFeatures) {
-    ['af-bpm', 'af-key', 'af-energy', 'af-valence', 'af-dance'].forEach(id => set(id, '…'));
-    ['af-energy-bar', 'af-valence-bar', 'af-dance-bar'].forEach(id => setW(id, 0));
-    return;
-  }
-  if (audioFeatures.__unavailable) {
-    set('af-bpm', '—'); set('af-key', t.features_unavailable || '不可用');
-    ['af-energy', 'af-valence', 'af-dance'].forEach(id => set(id, '—'));
-    ['af-energy-bar', 'af-valence-bar', 'af-dance-bar'].forEach(id => setW(id, 0));
-    return;
-  }
-
-  const { tempo, key, mode, energy, valence, danceability } = audioFeatures;
-  set('af-bpm', Math.round(tempo));
-  const keyName  = key >= 0 ? KEY_NAMES[key] : '—';
-  const modeName = mode === 1 ? t.features_major : t.features_minor;
-  set('af-key', key >= 0 ? `${keyName} ${modeName}` : '—');
-
-  const bars = [
-    { val: energy,      txt: 'af-energy', bar: 'af-energy-bar' },
-    { val: valence,     txt: 'af-valence', bar: 'af-valence-bar' },
-    { val: danceability,txt: 'af-dance',   bar: 'af-dance-bar' },
-  ];
-  bars.forEach(({ val, txt, bar }) => {
-    const pct = Math.round((val || 0) * 100);
-    set(txt, pct + '%');
-    setW(bar, pct);
-  });
-}
-
-const NORM_TARGET_DB = -14;
-function applyNormalization(loudness) {
-  if (!normEnabled || loudness == null) return;
-  const adjustDb = NORM_TARGET_DB - loudness;
-  const factor   = Math.pow(10, adjustDb / 20);
-  const adjusted = Math.round(Math.min(Math.max(baseVolume * factor, 1), 100));
-  api(`/me/player/volume?volume_percent=${adjusted}`, { method: 'PUT' });
-}
 
 // ── i18n ─────────────────────────────────────────────────────
 const i18n = {
@@ -1768,14 +1799,6 @@ const i18n = {
     close_tray: '最小化到托盘', close_quit: '直接退出',
     close_note_tray: '按 × 隐藏窗口，从托盘图标可重新打开',
     close_note_quit: '按 × 直接退出 Aura',
-    // Normalization
-    settings_norm: '响度标准化', norm_on: '开启', norm_off: '关闭',
-    norm_note: '自动均衡不同歌曲的音量差异（以 -14 dBFS 为基准）',
-    // Audio features
-    features_bpm: 'BPM', features_key: '调性', features_energy: '能量',
-    features_valence: '情绪', features_dance: '律动',
-    features_major: '大调', features_minor: '小调',
-    features_unavailable: 'Spotify API 不支持此功能',
   },
   en: {
     nav_home: 'Home', nav_search: 'Search', nav_library: 'Library',
@@ -1823,14 +1846,6 @@ const i18n = {
     close_tray: 'Minimize to tray', close_quit: 'Quit on close',
     close_note_tray: '× hides the window — reopen from the tray icon',
     close_note_quit: '× fully quits Aura',
-    // Normalization
-    settings_norm: 'Loudness Normalization', norm_on: 'On', norm_off: 'Off',
-    norm_note: 'Auto-levels volume across tracks (target −14 dBFS)',
-    // Audio features
-    features_bpm: 'BPM', features_key: 'Key', features_energy: 'Energy',
-    features_valence: 'Mood', features_dance: 'Dance',
-    features_major: 'Major', features_minor: 'Minor',
-    features_unavailable: 'Not available for this Spotify app',
   }
 };
 
@@ -1890,13 +1905,6 @@ function applyLang(lang) {
   document.getElementById('close-note').textContent = closeToTray ? t.close_note_tray : t.close_note_quit;
   document.getElementById('close-tray-btn').classList.toggle('active',  closeToTray);
   document.getElementById('close-quit-btn').classList.toggle('active', !closeToTray);
-  set('settings-norm-title', t.settings_norm);
-  document.getElementById('norm-on-btn').textContent  = t.norm_on;
-  document.getElementById('norm-off-btn').textContent = t.norm_off;
-  document.getElementById('norm-note').textContent    = t.norm_note;
-  document.getElementById('norm-on-btn')?.classList.toggle('active',  normEnabled);
-  document.getElementById('norm-off-btn')?.classList.toggle('active', !normEnabled);
-  if (featuresVisible) renderAudioFeatures();
   setGreeting();
 }
 
@@ -1975,15 +1983,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let volTimer;
   volSlider.addEventListener('input', () => {
     volumeLevel = parseInt(volSlider.value);
-    baseVolume  = volumeLevel;
     document.getElementById('volume-fill').style.width = volumeLevel + '%';
     clearTimeout(volTimer);
     volTimer = setTimeout(() => {
-      if (normEnabled && audioFeatures?.loudness != null) {
-        applyNormalization(audioFeatures.loudness);
-      } else {
-        api(`/me/player/volume?volume_percent=${volumeLevel}`, { method: 'PUT' });
-      }
+      api(`/me/player/volume?volume_percent=${volumeLevel}`, { method: 'PUT' });
     }, 300);
   });
 
@@ -2071,6 +2074,54 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
   ['npo-play-btn','npo-prev-btn','npo-next-btn','npo-shuffle-btn','npo-repeat-btn','npo-like-btn'].forEach(addRipple);
+
+  // Immersive mode
+  document.getElementById('immersive-btn').addEventListener('click', async () => {
+    if (npoOpen) closeNPO();
+    window.electronAPI.hideMiniPlayer();
+    const trackArtUrl2 = document.getElementById('now-album-art').src || '';
+    const title2 = document.getElementById('now-track-name').textContent;
+    const artist2 = document.getElementById('now-artist-name').textContent;
+    window.electronAPI.showImmersive({ title: title2, artist: artist2, artUrl: trackArtUrl2, isPlaying, duration_ms: currentDuration });
+    if (lyricsLines.length) window.electronAPI.updateImmersiveLyrics({ lines: lyricsLines, idx: currentLyricIdx });
+    const qData = await api('/me/player/queue');
+    if (qData) window.electronAPI.updateImmersiveQueue({ queue: buildImmersiveQueue(qData) });
+  });
+  window.electronAPI.onImmersiveAction(async type => {
+    if (type === 'play-pause') togglePlayPause();
+    else if (type === 'next') skipNext();
+    else if (type === 'prev') skipPrev();
+    else if (type.startsWith('seek:')) {
+      const ms = parseInt(type.slice(5));
+      api(`/me/player/seek?position_ms=${ms}`, { method: 'PUT' });
+      lastPollPos = ms; lastPollTime = Date.now();
+      updateProgress(ms, currentDuration);
+    } else if (type.startsWith('volume:')) {
+      const vol = parseInt(type.slice(7));
+      volumeLevel = vol;
+      document.getElementById('volume-fill').style.width = vol + '%';
+      document.getElementById('volume-slider').value = vol;
+      api(`/me/player/volume?volume_percent=${vol}`, { method: 'PUT' });
+    } else if (type === 'shuffle') {
+      shuffleActive = !shuffleActive;
+      await api(`/me/player/shuffle?state=${shuffleActive}`, { method: 'PUT' });
+      document.getElementById('shuffle-btn').classList.toggle('active', shuffleActive);
+      document.getElementById('npo-shuffle-btn').classList.toggle('active', shuffleActive);
+    } else if (type === 'repeat') {
+      repeatMode = (repeatMode + 1) % 3;
+      const states = ['off', 'context', 'track'];
+      await api(`/me/player/repeat?state=${states[repeatMode]}`, { method: 'PUT' });
+      document.getElementById('repeat-btn').classList.toggle('active', repeatMode > 0);
+      document.getElementById('repeat-icon').classList.toggle('hidden', repeatMode === 2);
+      document.getElementById('repeat-one-icon').classList.toggle('hidden', repeatMode !== 2);
+    } else if (type.startsWith('play-uri:')) {
+      playTrack(type.slice(9), currentContextUri || null);
+      setTimeout(async () => {
+        const qData = await api('/me/player/queue');
+        if (qData) window.electronAPI.updateImmersiveQueue({ queue: buildImmersiveQueue(qData) });
+      }, 1500);
+    }
+  });
 
   // NPO open/close
   document.getElementById('now-album-art').addEventListener('click', openNPO);
@@ -2207,21 +2258,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('viz-on-btn').addEventListener('click',  () => applyViz(true));
   document.getElementById('viz-off-btn').addEventListener('click', () => applyViz(false));
 
-  function applyNorm(enabled) {
-    normEnabled = enabled;
-    localStorage.setItem('normEnabled', enabled ? 'true' : 'false');
-    document.getElementById('norm-on-btn')?.classList.toggle('active',  enabled);
-    document.getElementById('norm-off-btn')?.classList.toggle('active', !enabled);
-    document.getElementById('norm-dot')?.classList.toggle('active', enabled);
-    if (enabled && audioFeatures?.loudness != null) applyNormalization(audioFeatures.loudness);
-    else if (!enabled) api(`/me/player/volume?volume_percent=${baseVolume}`, { method: 'PUT' });
-  }
-  // Init: only sync UI, no API call on startup
-  document.getElementById('norm-on-btn')?.classList.toggle('active',  normEnabled);
-  document.getElementById('norm-off-btn')?.classList.toggle('active', !normEnabled);
-  document.getElementById('norm-dot')?.classList.toggle('active', normEnabled);
-  document.getElementById('norm-on-btn')?.addEventListener('click',  () => applyNorm(true));
-  document.getElementById('norm-off-btn')?.addEventListener('click', () => applyNorm(false));
 
   function applyCloseBehavior(tray) {
     closeToTray = tray;
@@ -2235,17 +2271,24 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('close-tray-btn').addEventListener('click', () => applyCloseBehavior(true));
   document.getElementById('close-quit-btn').addEventListener('click', () => applyCloseBehavior(false));
 
-  // Audio features panel toggle
-  document.getElementById('npo-features-btn').addEventListener('click', () => {
-    featuresVisible = !featuresVisible;
-    document.getElementById('npo-features-btn').classList.toggle('active', featuresVisible);
-    document.getElementById('audio-features-panel').classList.toggle('hidden', !featuresVisible);
-    if (featuresVisible) renderAudioFeatures();
-  });
+  // Glass mode setting
+  const glassModes = { 'glass-black-btn': 'black', 'glass-color-btn': 'color', 'glass-clear-btn': 'clear' };
+  function applyGlassModeSetting(mode) {
+    localStorage.setItem('glass-mode', mode);
+    window.electronAPI.setImmersiveGlassMode(mode);
+    Object.entries(glassModes).forEach(([id, m]) =>
+      document.getElementById(id)?.classList.toggle('active', m === mode));
+  }
+  Object.entries(glassModes).forEach(([id, mode]) =>
+    document.getElementById(id)?.addEventListener('click', () => applyGlassModeSetting(mode)));
+  // init active state
+  applyGlassModeSetting(localStorage.getItem('glass-mode') || 'black');
 
   // Mini player buttons — show mini player overlay window
   function triggerMiniPlayer() {
     if (!currentTrackUri) return;
+    if (npoOpen) closeNPO();
+    window.electronAPI.hideImmersive();
     window.electronAPI.showMiniPlayer({
       title:    document.getElementById('now-track-name')?.textContent || '—',
       artist:   document.getElementById('now-artist-name')?.textContent || '',

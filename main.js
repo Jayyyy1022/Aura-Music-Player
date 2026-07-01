@@ -15,6 +15,7 @@ const DISCORD_CLIENT_ID = '';
 
 let mainWindow;
 let miniPlayerWindow;
+let immersiveWindow;
 let tray = null;
 let isQuitting = false;
 let closeToTray = true;
@@ -128,6 +129,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
   mainWindow.webContents.setUserAgent(
@@ -192,9 +194,11 @@ app.whenReady().then(() => {
   app.on('before-quit', () => { isQuitting = true; });
   mainWindow.on('close', (e) => {
     if (!isQuitting && closeToTray) { e.preventDefault(); mainWindow.hide(); }
-    else { isQuitting = true; miniPlayerWindow?.destroy(); }
+    else { isQuitting = true; miniPlayerWindow?.destroy(); immersiveWindow?.destroy(); }
   });
-
+  mainWindow.on('focus', () => {
+    if (immersiveWindow?.isVisible()) immersiveWindow.hide();
+  });
   // Global hotkeys (Ctrl+Alt+←/Space/→)
   globalShortcut.register('CmdOrCtrl+Alt+Space', () => mainWindow?.webContents.send('hotkey', 'play-pause'));
   globalShortcut.register('CmdOrCtrl+Alt+Right', () => mainWindow?.webContents.send('hotkey', 'next'));
@@ -363,6 +367,80 @@ ipcMain.on('discord:update', (_, d)    => {
       instance: false,
     });
   } catch {}
+});
+
+// ── Immersive Window ──────────────────────────────────────
+function createImmersiveWindow() {
+  const { bounds } = screen.getPrimaryDisplay();
+  immersiveWindow = new BrowserWindow({
+    width: bounds.width, height: bounds.height,
+    x: bounds.x, y: bounds.y,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    alwaysOnTop: false,
+    focusable: false,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-immersive.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  immersiveWindow.loadFile(path.join(__dirname, 'renderer', 'immersive.html'));
+  immersiveWindow.on('closed', () => { immersiveWindow = null; });
+}
+
+ipcMain.on('immersive:show', (_, data) => {
+  if (!immersiveWindow) createImmersiveWindow();
+  if (data) immersiveWindow.webContents.send('immersive:update', data);
+  if (immersiveWindow.isVisible()) return;
+  const doShow = () => {
+    immersiveWindow.showInactive();
+    immersiveWindow.setIgnoreMouseEvents(true, { forward: true });
+    mainWindow?.minimize();
+  };
+  if (immersiveWindow.webContents.isLoading()) immersiveWindow.once('ready-to-show', doShow);
+  else doShow();
+});
+ipcMain.on('immersive:hide', () => immersiveWindow?.hide());
+ipcMain.on('immersive:update', (_, d) => {
+  if (immersiveWindow?.isVisible()) immersiveWindow.webContents.send('immersive:update', d);
+});
+ipcMain.on('immersive:lyrics', (_, d) => {
+  if (immersiveWindow?.isVisible()) immersiveWindow.webContents.send('immersive:lyrics', d);
+});
+ipcMain.on('immersive:progress', (_, d) => {
+  if (immersiveWindow?.isVisible()) immersiveWindow.webContents.send('immersive:progress', d);
+});
+ipcMain.on('immersive:queue', (_, d) => {
+  if (immersiveWindow?.isVisible()) immersiveWindow.webContents.send('immersive:queue', d);
+});
+ipcMain.on('immersive:mouse-ignore', (_, v) => {
+  if (!immersiveWindow) return;
+  if (v) immersiveWindow.setIgnoreMouseEvents(true, { forward: true });
+  else   immersiveWindow.setIgnoreMouseEvents(false);
+});
+ipcMain.on('immersive:glass-mode', (_, m) => {
+  immersiveWindow?.webContents.send('immersive:glass-mode', m);
+});
+ipcMain.on('immersive:action', (_, type) => {
+  if (type === 'focus-main') { mainWindow?.show(); mainWindow?.focus(); return; }
+  if (type === 'close-immersive') {
+    immersiveWindow?.hide();
+    mainWindow?.show();
+    mainWindow?.focus();
+    return;
+  }
+  mainWindow?.webContents.send('immersive:action', type);
+});
+ipcMain.on('immersive:close', () => {
+  immersiveWindow?.hide();
+  mainWindow?.show();
+  mainWindow?.focus();
 });
 
 // ── Mini Player IPC ───────────────────────────────────────

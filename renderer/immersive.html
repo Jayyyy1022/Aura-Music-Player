@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+:root { --a: 168,85,247; }
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  width:100vw; height:100vh;
+  background:transparent; overflow:hidden;
+  font-family:-apple-system,'SF Pro Display','Segoe UI',sans-serif;
+  -webkit-font-smoothing:antialiased;
+  user-select:none; cursor:default;
+}
+
+/* ── Glass card (controls) ─────────────────── */
+.wc {
+  position:absolute;
+  background:rgba(10,10,16,0.84);
+  backdrop-filter:blur(44px) saturate(160%);
+  -webkit-backdrop-filter:blur(44px) saturate(160%);
+  border:1px solid rgba(255,255,255,0.1);
+  box-shadow:0 24px 72px rgba(0,0,0,.75), 0 0 0 0.5px rgba(255,255,255,.05) inset;
+  overflow:hidden;
+}
+
+/* ── Card drag handle ──────────────────────── */
+.wh {
+  height:26px; display:flex; align-items:center; justify-content:space-between;
+  padding:0 10px; cursor:grab; flex-shrink:0;
+}
+.wh:active { cursor:grabbing; }
+.wh-label {
+  font-size:10px; font-weight:700; letter-spacing:.8px; text-transform:uppercase;
+  color:rgba(255,255,255,.3);
+}
+.wh-grip {
+  position:absolute; left:50%; transform:translateX(-50%);
+  width:30px; height:3px; background:rgba(255,255,255,.17); border-radius:2px;
+}
+.wh-close {
+  width:18px; height:18px; background:rgba(255,255,255,.08); border:none; border-radius:50%;
+  color:rgba(255,255,255,.38); cursor:pointer; display:flex; align-items:center; justify-content:center;
+  font-size:9px; transition:background .15s, color .15s;
+}
+.wh-close:hover { background:rgba(210,55,55,.85); color:#fff; }
+
+/* ── Bare drag handle (frameless widgets) ─── */
+.bh {
+  height:22px; width:100%; cursor:grab; display:flex; align-items:center; justify-content:center;
+  opacity:0; transition:opacity .2s; flex-shrink:0;
+}
+.bh:active { cursor:grabbing; }
+.bh::before {
+  content:''; width:28px; height:3px; background:rgba(255,255,255,.25); border-radius:2px;
+}
+.fw:hover .bh { opacity:1; }
+
+/* Frameless widget */
+.fw { position:absolute; cursor:grab; }
+.fw:active { cursor:grabbing; }
+
+/* Give lyric widget a near-invisible bg so its full area receives mouse events */
+#lw { background:rgba(0,0,0,0.001); }
+
+/* ══ CONTROLS (glass card) ══════════════════ */
+#cw { border-radius:16px; width:700px; display:flex; flex-direction:column; }
+.cw-body { padding:0 14px 12px; display:flex; flex-direction:column; gap:8px; }
+.cw-row { display:flex; align-items:center; gap:12px; }
+.cw-art {
+  width:42px; height:42px; border-radius:7px; object-fit:cover; background:#1e1e28;
+  flex-shrink:0; box-shadow:0 4px 14px rgba(0,0,0,.55);
+}
+.cw-art[src=""], .cw-art:not([src]) { opacity:0; }
+.cw-info { flex:1; min-width:0; }
+.cw-title { font-size:13px; font-weight:500; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cw-artist { font-size:11px; color:rgba(255,255,255,.48); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+.cw-btns { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.ib {
+  background:none; border:none; color:rgba(255,255,255,.6); cursor:pointer;
+  padding:6px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  transition:color .15s, transform .12s;
+}
+.ib:hover { color:#fff; transform:scale(1.12); }
+.ib:active { transform:scale(0.88); }
+.ib.active { color:rgb(var(--a)); }
+.play-btn {
+  width:40px; height:40px; background:#fff; border:none; border-radius:50%; color:#000;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  transition:transform .12s, box-shadow .15s; box-shadow:0 4px 16px rgba(0,0,0,.45); flex-shrink:0;
+}
+.play-btn:hover { transform:scale(1.08); box-shadow:0 6px 22px rgba(0,0,0,.55); }
+.play-btn:active { transform:scale(0.92); }
+.cw-vol { display:flex; align-items:center; gap:8px; flex:0 0 160px; justify-content:flex-end; }
+.vol-track { width:90px; height:3px; background:rgba(255,255,255,.14); border-radius:2px; position:relative; }
+.vol-fill { height:100%; background:rgba(255,255,255,.6); border-radius:2px; pointer-events:none; }
+.vol-input { position:absolute; inset:0; width:100%; height:20px; opacity:0; cursor:pointer; top:50%; transform:translateY(-50%); }
+.cw-prog { display:flex; align-items:center; gap:8px; width:100%; }
+.tlbl { font-size:10px; color:rgba(255,255,255,.32); font-variant-numeric:tabular-nums; min-width:36px; text-align:center; }
+.pbar { flex:1; height:3px; background:rgba(255,255,255,.14); border-radius:2px; cursor:pointer; position:relative; transition:height .15s; }
+.pbar:hover { height:5px; }
+.pfill { height:100%; background:rgba(var(--a),.9); border-radius:2px; width:0%; pointer-events:none; }
+
+/* ══ LYRICS (frameless, single line) ════════ */
+#lw { width:520px; }
+#lw-line {
+  padding:8px 0;
+  font-size:23px; font-weight:700; color:#fff; line-height:1.35; text-align:center;
+  text-shadow:0 2px 20px rgba(0,0,0,.95), 0 0 40px rgba(var(--a),.45);
+  letter-spacing:-.2px; white-space:pre-wrap; word-break:break-word;
+  transition:opacity .35s ease, transform .35s ease;
+  min-height:1.35em;
+}
+#lw-line.out {
+  opacity:0; transform:translateY(-10px);
+}
+
+/* ══ VERTICAL CAROUSEL (frameless) ══════════ */
+#qw { width:220px; }
+
+.cf-scene {
+  width:220px; height:520px;
+  position:relative;
+  perspective:700px;
+  perspective-origin:50% 50%;
+  overflow:visible;
+}
+
+.cf-item {
+  position:absolute;
+  width:200px; height:200px;
+  top:50%; left:50%;
+  margin-top:-100px; margin-left:-100px;
+  border-radius:14px; overflow:hidden;
+  cursor:pointer;
+  transition:transform .42s cubic-bezier(.22,1,.36,1), opacity .42s, box-shadow .42s;
+  box-shadow:0 18px 50px rgba(0,0,0,.8);
+  backface-visibility:hidden;
+}
+.cf-item img { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+.cf-item.cf-active {
+  box-shadow:0 22px 60px rgba(0,0,0,.85);
+}
+
+.cf-info {
+  margin-top:10px; padding:0 10px;
+  text-align:center;
+}
+.cf-name {
+  font-size:14px; font-weight:600; color:rgba(255,255,255,.92);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; transition:opacity .3s;
+}
+.cf-artist {
+  font-size:11px; color:rgba(255,255,255,.42); margin-top:3px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+</style>
+</head>
+<body>
+
+<!-- ══ Controls (glass card) ═════════════════ -->
+<div class="wc" id="cw">
+  <div class="wh" id="cw-h">
+    <div class="wh-label">播放控制</div>
+    <div class="wh-grip"></div>
+    <button class="wh-close" data-hide="cw">✕</button>
+  </div>
+  <div class="cw-body">
+    <div class="cw-row">
+      <img id="c-art" class="cw-art" alt="" crossorigin="anonymous">
+      <div class="cw-info">
+        <div class="cw-title"  id="c-title">—</div>
+        <div class="cw-artist" id="c-artist">—</div>
+      </div>
+      <div class="cw-btns">
+        <button class="ib" id="c-shuffle">
+          <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>
+        </button>
+        <button class="ib" id="c-prev">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+        </button>
+        <button class="play-btn" id="c-play">
+          <svg id="c-pi" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+          <svg id="c-pa" viewBox="0 0 24 24" width="18" height="18" style="display:none"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </button>
+        <button class="ib" id="c-next">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+        <button class="ib" id="c-repeat">
+          <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+        </button>
+      </div>
+      <div class="cw-vol">
+        <button class="ib" id="c-mute">
+          <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        </button>
+        <div class="vol-track">
+          <div class="vol-fill" id="c-vf" style="width:70%"></div>
+          <input type="range" id="c-vs" min="0" max="100" value="70" class="vol-input">
+        </div>
+      </div>
+    </div>
+    <div class="cw-prog">
+      <span class="tlbl" id="c-cur">0:00</span>
+      <div class="pbar" id="c-pb"><div class="pfill" id="c-pf"></div></div>
+      <span class="tlbl" id="c-dur">0:00</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Lyrics (single floating line) ════════ -->
+<div class="fw" id="lw">
+  <div class="bh" id="lw-h"></div>
+  <div id="lw-line"></div>
+</div>
+
+<!-- ══ Vertical Carousel (frameless) ════════ -->
+<div class="fw" id="qw">
+  <div class="bh" id="qw-h"></div>
+  <div class="cf-scene" id="cf-scene"></div>
+  <div class="cf-info">
+    <div class="cf-name"   id="cf-name"></div>
+    <div class="cf-artist" id="cf-artist"></div>
+  </div>
+</div>
+
+<script>
+const xapi = window.immersiveAPI;
+const root  = document.documentElement;
+
+// ── state ──────────────────────────────────────
+let playing=false, durMs=0, posMs=0;
+let lines=[], lineIdx=0;
+let volLvl=70;
+let accentRgb=[168,85,247];
+let dragging=false;
+let glassMode=localStorage.getItem('glass-mode')||'black';
+
+// coverflow
+let cfItems=[];
+let cfIdx=0;
+let cfPlayingIdx=0;
+let lastWheel=0;
+let snapTimer=null;
+
+// ── helpers ────────────────────────────────────
+function el(s){ return document.getElementById(s); }
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmt(ms){ const s=Math.floor(ms/1000); return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; }
+
+// ── color ──────────────────────────────────────
+function applyGlassMode(){
+  const cw=el('cw');
+  const [r,g,b]=accentRgb;
+  if(glassMode==='black'){
+    cw.style.background='rgba(10,10,16,0.84)';
+  } else if(glassMode==='color'){
+    cw.style.background=`rgba(${Math.floor(r*.45)},${Math.floor(g*.45)},${Math.floor(b*.45)},0.88)`;
+  } else {
+    cw.style.background='rgba(255,255,255,0.07)';
+  }
+  document.querySelectorAll('.wh-mode').forEach(b=>b.classList.toggle('gm-active',b.dataset.gm===glassMode));
+  localStorage.setItem('glass-mode',glassMode);
+}
+
+function setAccent(r,g,b){
+  accentRgb=[r,g,b];
+  root.style.setProperty('--a',`${r},${g},${b}`);
+  el('c-pf').style.background=`rgb(${r},${g},${b})`;
+  if(glassMode==='color') applyGlassMode();
+}
+function extractColor(img){
+  try{
+    const t=document.createElement('canvas'); t.width=t.height=8;
+    const c=t.getContext('2d'); c.drawImage(img,0,0,8,8);
+    const px=c.getImageData(0,0,8,8).data;
+    let br=[168,85,247],bs=0;
+    for(let i=0;i<px.length;i+=4){
+      const r=px[i],g=px[i+1],b=px[i+2];
+      const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+      const s=mx===0?0:(mx-mn)/mx;
+      if(s>bs&&mx>40){bs=s;br=[r,g,b];}
+    }
+    setAccent(...br);
+  }catch(e){}
+}
+
+// ── IPC ────────────────────────────────────────
+xapi.onUpdate(d=>{
+  if(d.title  !==undefined) el('c-title').textContent =d.title  ||'—';
+  if(d.artist !==undefined) el('c-artist').textContent=d.artist ||'—';
+  if(typeof d.isPlaying==='boolean') setPlay(d.isPlaying);
+  if(d.duration_ms) durMs=d.duration_ms;
+  if(d.artUrl){
+    const img=el('c-art'); img.src=d.artUrl;
+    img.onload=()=>extractColor(img);
+  }
+});
+
+xapi.onLyrics(d=>{ lines=d.lines||[]; lineIdx=d.idx||0; showLyricLine(); });
+xapi.onProgress(d=>{
+  posMs=d.ms||0;
+  if(typeof d.idx==='number'&&d.idx!==lineIdx){ lineIdx=d.idx; showLyricLine(); }
+  updateProg();
+});
+xapi.onQueue(d=>buildCf(d.queue||[]));
+
+// ── playback ───────────────────────────────────
+function setPlay(v){
+  playing=v;
+  el('c-pi').style.display=v?'none':'';
+  el('c-pa').style.display=v?'':'none';
+}
+function updateProg(){
+  const pct=durMs>0?Math.min(1,posMs/durMs)*100:0;
+  el('c-pf').style.width=pct+'%';
+  el('c-cur').textContent=fmt(posMs);
+  el('c-dur').textContent =fmt(durMs);
+}
+
+// ── Single-line lyrics (fade swap) ─────────────
+let currentLyricText='';
+function showLyricLine(){
+  const text=lines[lineIdx]?.text||'';
+  if(text===currentLyricText) return;
+  currentLyricText=text;
+  const div=el('lw-line');
+  div.classList.add('out');
+  setTimeout(()=>{
+    div.textContent=text;
+    div.classList.remove('out');
+  },340);
+}
+
+// ── Vertical coverflow ─────────────────────────
+function getCfT(pos){
+  const a=Math.abs(pos), sg=Math.sign(pos)||1;
+  if(a===0) return {y:0,   rx:0,     s:1,    o:1,    z:5};
+  if(a===1) return {y:sg*152, rx:-sg*28, s:0.74, o:0.58, z:4};
+  if(a===2) return {y:sg*232, rx:-sg*48, s:0.51, o:0.26, z:3};
+  return null;
+}
+
+function buildCf(items){
+  cfItems=items;
+  const playIdx=items.findIndex(t=>t.isCurrent);
+  cfPlayingIdx=playIdx>=0?playIdx:0;
+  cfIdx=cfPlayingIdx;
+
+  const scene=el('cf-scene');
+  scene.innerHTML='';
+  const divs=[];
+
+  items.forEach((t,i)=>{
+    const div=document.createElement('div');
+    div.className='cf-item'; div.dataset.idx=i;
+    div.style.transition='none'; // place instantly, no fly-in
+    const img=document.createElement('img'); img.src=t.artUrl||''; img.alt='';
+    div.appendChild(img);
+    div.addEventListener('click',()=>{
+      if(i===cfIdx){
+        xapi.action('play-uri:'+t.uri);
+        return;
+      }
+      cfIdx=i; applyCf();
+      resetSnap();
+      setTimeout(()=>xapi.action('play-uri:'+t.uri), 380);
+    });
+    scene.appendChild(div);
+    divs.push(div);
+  });
+  applyCf();
+  // Re-enable transitions after items settle at their positions
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    divs.forEach(d=>{ d.style.transition=''; });
+  }));
+}
+
+function applyCf(){
+  const nodes=el('cf-scene').querySelectorAll('.cf-item');
+  nodes.forEach((n,i)=>{
+    const pos=i-cfIdx;
+    const p=getCfT(pos);
+    if(!p||Math.abs(pos)>2){
+      n.style.opacity='0';
+      n.style.pointerEvents='none';
+      n.style.zIndex='0';
+      n.style.transform=`translateY(${Math.sign(pos||1)*310}px) scale(0.3)`;
+    } else {
+      n.style.opacity=p.o;
+      n.style.pointerEvents='';
+      n.style.zIndex=p.z;
+      n.style.transform=`translateY(${p.y}px) rotateX(${p.rx}deg) scale(${p.s})`;
+      n.classList.toggle('cf-active', pos===0);
+    }
+  });
+  const t=cfItems[cfIdx];
+  if(t){
+    el('cf-name').textContent  =t.name  ||'';
+    el('cf-artist').textContent=t.artist||'';
+  }
+}
+
+// ── Snap back timer ─────────────────────────────
+function resetSnap(){
+  if(snapTimer) clearTimeout(snapTimer);
+  if(cfIdx===cfPlayingIdx) return;
+  snapTimer=setTimeout(()=>{
+    cfIdx=cfPlayingIdx;
+    applyCf();
+  }, 5000);
+}
+
+// ── Wheel scroll (attached directly to carousel widget) ────────────
+el('qw').addEventListener('wheel', e=>{
+  e.preventDefault();
+  const now=Date.now();
+  if(now-lastWheel<200) return;
+  lastWheel=now;
+  cfIdx=Math.max(0,Math.min(cfIdx+(e.deltaY>0?1:-1),cfItems.length-1));
+  applyCf();
+  resetSnap();
+},{passive:false});
+
+// ── Glass mode ─────────────────────────────────
+applyGlassMode();
+xapi.onGlassMode(mode=>{ glassMode=mode; applyGlassMode(); });
+
+// ── Controls wiring ────────────────────────────
+el('c-play').addEventListener('click',    ()=>xapi.action('play-pause'));
+el('c-prev').addEventListener('click',    ()=>xapi.action('prev'));
+el('c-next').addEventListener('click',    ()=>xapi.action('next'));
+el('c-shuffle').addEventListener('click', ()=>xapi.action('shuffle'));
+el('c-repeat').addEventListener('click',  ()=>xapi.action('repeat'));
+el('c-mute').addEventListener('click', ()=>{
+  const muted=parseInt(el('c-vs').value)>0;
+  if(muted){ el('c-vs').value=0; el('c-vf').style.width='0%'; xapi.action('volume:0'); }
+  else     { el('c-vs').value=volLvl||50; el('c-vf').style.width=(volLvl||50)+'%'; xapi.action('volume:'+(volLvl||50)); }
+});
+el('c-vs').addEventListener('input',e=>{
+  volLvl=parseInt(e.target.value);
+  el('c-vf').style.width=volLvl+'%';
+  xapi.action('volume:'+volLvl);
+});
+el('c-pb').addEventListener('click',e=>{
+  if(!durMs) return;
+  const r=e.currentTarget.getBoundingClientRect();
+  const ms=Math.floor(((e.clientX-r.left)/r.width)*durMs);
+  xapi.action('seek:'+ms); posMs=ms; updateProg();
+});
+
+// ── Hide buttons ───────────────────────────────
+document.querySelectorAll('.wh-close[data-hide]').forEach(btn=>{
+  btn.addEventListener('click',e=>{ e.stopPropagation(); el(btn.dataset.hide).style.display='none'; });
+});
+
+// ── Escape ─────────────────────────────────────
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') xapi.action('close-immersive'); });
+
+// ── Drag ───────────────────────────────────────
+function makeDrag(handle,widget){
+  handle.addEventListener('mousedown',e=>{
+    if(e.target.closest('.wh-close')) return;
+    e.preventDefault();
+    dragging=true; xapi.setMouseIgnore(false);
+    const sx=e.clientX,sy=e.clientY;
+    const r=widget.getBoundingClientRect(); const ol=r.left,ot=r.top;
+    const onM=e=>{ widget.style.left=(ol+e.clientX-sx)+'px'; widget.style.top=(ot+e.clientY-sy)+'px'; widget.style.right='auto'; widget.style.bottom='auto'; };
+    const onU=()=>{
+      dragging=false;
+      document.removeEventListener('mousemove',onM); document.removeEventListener('mouseup',onU);
+      localStorage.setItem('wp3-'+widget.id,JSON.stringify({left:widget.style.left,top:widget.style.top}));
+    };
+    document.addEventListener('mousemove',onM); document.addEventListener('mouseup',onU);
+  });
+}
+makeDrag(el('cw-h'),el('cw'));
+makeDrag(el('lw'),el('lw'));
+makeDrag(el('qw-h'),el('qw'));
+
+// ── Default positions ──────────────────────────
+(function initPos(){
+  const W=window.screen.width, H=window.screen.height;
+  const defs={
+    cw:{ left:Math.floor((W-700)/2)+'px', top:(H-98)+'px'             },
+    lw:{ left:Math.floor((W-520)/2)+'px', top:Math.floor(H*0.62)+'px' },
+    qw:{ left:(W-280)+'px',               top:Math.floor((H-600)/2)+'px' },
+  };
+  for(const[wid,pos] of Object.entries(defs)){
+    const e=el(wid);
+    const saved=localStorage.getItem('wp3-'+wid);
+    let placed=false;
+    if(saved){
+      try{
+        const p=JSON.parse(saved);
+        const lv=parseInt(p.left), tv=parseInt(p.top);
+        if(lv>=0&&lv<W-20&&tv>=0&&tv<H-20){ e.style.left=p.left; e.style.top=p.top; placed=true; }
+      }catch{}
+    }
+    if(!placed){ e.style.left=pos.left; e.style.top=pos.top; }
+    e.style.right='auto'; e.style.bottom='auto';
+  }
+})();
+
+// ── Mouse pass-through ─────────────────────────
+document.addEventListener('mousemove',e=>{
+  if(dragging) return;
+  const over=e.composedPath().some(n=>{ const c=n.classList; return c&&(c.contains('wc')||c.contains('fw')||c.contains('cf-item')); });
+  xapi.setMouseIgnore(!over);
+});
+</script>
+</body>
+</html>
