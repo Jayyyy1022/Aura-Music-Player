@@ -440,6 +440,8 @@ async function pollPlayback() {
     volumeLevel = vol;
     document.getElementById('volume-slider').value = vol;
     document.getElementById('volume-fill').style.width = vol + '%';
+    document.getElementById('npo-volume-slider').value = vol;
+    document.getElementById('vinyl-volume-slider').value = vol;
   }
 
   lastPollPos = state.progress_ms || 0;
@@ -498,7 +500,7 @@ async function pollPlayback() {
   // Refresh immersive carousel when track changes
   if (prevUri !== currentTrackUri) {
     setTimeout(async () => {
-      const qData = await api('/me/player/queue');
+      const qData = await fetchFullQueue();
       if (qData) window.electronAPI.updateImmersiveQueue({ queue: buildImmersiveQueue(qData) });
     }, 800);
   }
@@ -855,13 +857,14 @@ async function openNPO() {
   window.electronAPI.hideImmersive();
   document.getElementById('npo').classList.add('npo-open');
   npoOpen = true;
+  document.getElementById('npo-volume-slider').value = volumeLevel;
   spawnOrbs();
   if (vizEnabled) await initVisualizer();
   if (isPlaying) startViz();
 }
 
 function closeNPO() {
-  document.getElementById('npo').classList.remove('npo-open');
+  document.getElementById('npo').classList.remove('npo-open', 'controls-idle', 'queue-open');
   npoOpen = false;
   stopViz();
   document.getElementById('npo-orbs')?.classList.remove('ready');
@@ -893,20 +896,38 @@ function spawnOrbs(containerId = 'npo-orbs') {
 async function fetchMyPlaylists(forceRefresh = false) {
   const age = Date.now() - cachedMyPlaylistsAt;
   if (!forceRefresh && cachedMyPlaylists && age < 5 * 60 * 1000) return cachedMyPlaylists;
-  const data = await api('/me/playlists?limit=50');
-  if (data) { cachedMyPlaylists = data; cachedMyPlaylistsAt = Date.now(); }
-  return data;
+  let items = [];
+  let next = '/me/playlists?limit=50';
+  while (next) {
+    const page = await api(next.replace('https://api.spotify.com/v1', ''));
+    if (!page) break;
+    items = items.concat(page.items || []);
+    next = page.next;
+  }
+  const result = { items };
+  cachedMyPlaylists = result;
+  cachedMyPlaylistsAt = Date.now();
+  return result;
 }
 
 // ── Sidebar ─────────────────────────────────────────────────
 async function loadSidebar() {
   const data = await fetchMyPlaylists();
-  if (!data) return; // silent fail — library will show its own error
+  if (!data) return;
   const list = document.getElementById('playlist-list');
-  list.innerHTML = data.items
+  const likedItem = `<div class="playlist-item playlist-item-liked" id="sidebar-liked-btn">
+    <svg viewBox="0 0 24 24" width="13" height="13" style="flex-shrink:0;margin-right:5px"><path fill="currentColor" d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3z"/></svg>
+    ${i18n[currentLang].home_liked}
+  </div>`;
+  list.innerHTML = likedItem + data.items
     .map(p => `<div class="playlist-item" data-id="${p.id}" title="${esc(p.name)}">${esc(p.name)}</div>`)
     .join('');
-  list.querySelectorAll('.playlist-item').forEach(el => {
+  document.getElementById('sidebar-liked-btn').addEventListener('click', () => {
+    document.querySelectorAll('.playlist-item').forEach(x => x.classList.remove('active'));
+    document.getElementById('sidebar-liked-btn').classList.add('active');
+    openLikedSongs();
+  });
+  list.querySelectorAll('.playlist-item[data-id]').forEach(el => {
     el.addEventListener('click', () => {
       document.querySelectorAll('.playlist-item').forEach(x => x.classList.remove('active'));
       el.classList.add('active');
@@ -936,18 +957,32 @@ async function loadRecent() {
 }
 
 async function loadLiked() {
-  const data = await api('/me/tracks?limit=20');
-  if (!data) return;
-  const tracks = data.items.map(i => i.track).filter(Boolean);
   const container = document.getElementById('liked-content');
-  container.innerHTML = trackListHTML(tracks, likedCollectionUri);
-  bindTrackRows(container, likedCollectionUri);
+  // Show count from first page
+  const data = await api('/me/tracks?limit=1');
+  const total = data?.total ?? '—';
+  container.innerHTML = `
+    <div class="liked-home-card" id="liked-home-card">
+      <div class="liked-home-art">
+        <svg viewBox="0 0 24 24" width="48" height="48"><path fill="#fff" d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3z"/></svg>
+      </div>
+      <div class="liked-home-info">
+        <div class="liked-home-title">${i18n[currentLang].home_liked}</div>
+        <div class="liked-home-count">${total} ${i18n[currentLang].playlist_tracks_suffix}</div>
+      </div>
+      <svg viewBox="0 0 24 24" width="20" height="20" class="liked-home-arrow"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+    </div>`;
+  document.getElementById('liked-home-card')?.addEventListener('click', openLikedSongs);
 }
 
 async function loadLikedIds() {
-  const data = await api('/me/tracks?limit=50');
-  if (!data) return;
-  data.items.forEach(i => { if (i.track) likedTrackIds.add(i.track.id); });
+  let next = '/me/tracks?limit=50&fields=items(track(id)),next';
+  while (next) {
+    const page = await api(next.replace('https://api.spotify.com/v1', ''));
+    if (!page) break;
+    page.items?.forEach(i => { if (i.track?.id) likedTrackIds.add(i.track.id); });
+    next = page.next;
+  }
 }
 
 // ── Search ──────────────────────────────────────────────────
@@ -1028,18 +1063,26 @@ async function loadLibrary(forceRefresh = false) {
     const msg = document.createElement('div');
     msg.className = 'loading-text';
     msg.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:14px';
-    msg.innerHTML = `<span style="color:var(--text-muted);font-size:13px">${i18n[currentLang].api_quota}</span><span style="color:var(--text-muted);font-size:12px;opacity:0.6">等配额重置后再试（约 12:50 AM）</span>`;
+    msg.innerHTML = `<span style="color:var(--text-muted);font-size:13px">${i18n[currentLang].api_quota}</span><span style="color:var(--text-muted);font-size:12px;opacity:0.6">${i18n[currentLang].api_quota_note}</span>`;
     msg.appendChild(btn);
     container.innerHTML = '';
     container.appendChild(msg);
     return;
   }
-  container.innerHTML = `<div class="card-grid">${data.items.map(p => `
+  const likedCard = `<div class="card card-liked" id="library-liked-card">
+    <div class="card-img liked-card-art">
+      <svg viewBox="0 0 24 24" width="42" height="42"><path fill="#fff" d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3z"/></svg>
+    </div>
+    <div class="card-name">${i18n[currentLang].home_liked}</div>
+    <div class="card-sub">${i18n[currentLang].playlist_type}</div>
+  </div>`;
+  container.innerHTML = `<div class="card-grid">${likedCard}${data.items.map(p => `
     <div class="card" data-id="${p.id}">
       <img src="${p.images?.[0]?.url || ''}" alt="" class="card-img">
       <div class="card-name">${esc(p.name)}</div>
       <div class="card-sub">播放列表</div>
     </div>`).join('')}</div>`;
+  document.getElementById('library-liked-card')?.addEventListener('click', openLikedSongs);
   container.querySelectorAll('.card[data-id]').forEach(card => {
     card.addEventListener('click', () => openPlaylist(card.dataset.id));
   });
@@ -1173,6 +1216,100 @@ async function openPlaylist(id) {
     setViewMode('vinyl');
     if (shelfResizeObserver) { shelfResizeObserver.disconnect(); shelfResizeObserver = null; }
     renderVinylShelf(tracks, data.uri, trackArea);
+  });
+}
+
+// ── Liked Songs (full paginated view) ────────────────────────
+async function openLikedSongs() {
+  switchView('playlist');
+  const container = document.getElementById('playlist-detail');
+  container.innerHTML = `<div class="playlist-skeleton">
+    <div class="skel-hero">
+      <div class="skel skel-img"></div>
+      <div class="skel-info">
+        <div class="skel skel-title"></div><div class="skel skel-sub"></div>
+        <div class="skel skel-sub" style="width:28%"></div><div class="skel skel-btn"></div>
+      </div>
+    </div>
+    ${Array(7).fill(0).map(() => `<div class="skel-track">
+      <div class="skel skel-tn"></div><div class="skel skel-ta"></div>
+      <div class="skel-ti"><div class="skel skel-tt"></div><div class="skel skel-tar"></div></div>
+      <div class="skel skel-td"></div></div>`).join('')}
+  </div>`;
+
+  let allRaw = [];
+  let next = '/me/tracks?limit=50';
+  while (next) {
+    const page = await api(next.replace('https://api.spotify.com/v1', ''));
+    if (!page) break;
+    allRaw = allRaw.concat(page.items || []);
+    next = page.next;
+  }
+
+  const contextUri = likedCollectionUri || 'spotify:collection:tracks';
+  const tracks = allRaw.map(i => i.track).filter(t => t?.type === 'track');
+  cachedPlaylistTracks = tracks;
+  cachedPlaylistUri = contextUri;
+
+  const listHTML = trackListHTML(tracks, contextUri);
+
+  container.innerHTML = `
+    <div class="playlist-hero">
+      <div class="liked-hero-art">
+        <svg viewBox="0 0 24 24" width="56" height="56"><path fill="#fff" d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3z"/></svg>
+      </div>
+      <div class="playlist-hero-info">
+        <div class="playlist-type">${i18n[currentLang].playlist_type}</div>
+        <h1>${i18n[currentLang].home_liked}</h1>
+        <p class="playlist-count">${tracks.length} ${i18n[currentLang].playlist_tracks_suffix}</p>
+        <div class="hero-actions">
+          <button class="primary-btn" id="play-all-btn">${i18n[currentLang].play_all}</button>
+          <div class="lib-view-toggle">
+            <button id="plist-list-btn" class="lib-view-btn${playlistViewMode === 'list' ? ' active' : ''}" title="列表">
+              <svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>
+            </button>
+            <button id="plist-shelf-btn" class="lib-view-btn${playlistViewMode === 'shelf' ? ' active' : ''}" title="书架">
+              <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="4" width="4" height="14" rx="1" fill="currentColor"/><rect x="8.5" y="2" width="3" height="16" rx="1" fill="currentColor" opacity="0.75"/><rect x="13" y="5" width="4" height="13" rx="1" fill="currentColor" opacity="0.9"/><rect x="18" y="3" width="3" height="15" rx="1" fill="currentColor" opacity="0.65"/><rect x="2" y="18.5" width="20" height="2.5" rx="1" fill="currentColor"/></svg>
+            </button>
+            <button id="plist-vinyl-btn" class="lib-view-btn${playlistViewMode === 'vinyl' ? ' active' : ''}" title="黑胶">
+              <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="track-list-wrapper" id="playlist-track-area">${playlistViewMode === 'list' ? listHTML : ''}</div>`;
+
+  const trackArea = container.querySelector('#playlist-track-area');
+  if (playlistViewMode === 'shelf') renderTrackShelf(tracks, contextUri, trackArea);
+  else if (playlistViewMode === 'vinyl') renderVinylShelf(tracks, contextUri, trackArea);
+  else bindTrackRows(trackArea, contextUri);
+
+  container.querySelector('#play-all-btn').addEventListener('click', () => playContext(contextUri));
+
+  const setViewMode = (mode) => {
+    playlistViewMode = mode;
+    ['list','shelf','vinyl'].forEach(m => {
+      container.querySelector(`#plist-${m}-btn`)?.classList.toggle('active', m === mode);
+    });
+  };
+  container.querySelector('#plist-list-btn').addEventListener('click', () => {
+    if (playlistViewMode === 'list') return;
+    setViewMode('list');
+    if (shelfResizeObserver) { shelfResizeObserver.disconnect(); shelfResizeObserver = null; }
+    trackArea.innerHTML = listHTML;
+    bindTrackRows(trackArea, contextUri);
+  });
+  container.querySelector('#plist-shelf-btn').addEventListener('click', () => {
+    if (playlistViewMode === 'shelf') return;
+    setViewMode('shelf');
+    renderTrackShelf(tracks, contextUri, trackArea);
+  });
+  container.querySelector('#plist-vinyl-btn').addEventListener('click', () => {
+    if (playlistViewMode === 'vinyl') return;
+    setViewMode('vinyl');
+    if (shelfResizeObserver) { shelfResizeObserver.disconnect(); shelfResizeObserver = null; }
+    renderVinylShelf(tracks, contextUri, trackArea);
   });
 }
 
@@ -1311,36 +1448,28 @@ async function fetchLyrics(track) {
   } catch {}
   if (stale()) return;
 
-  // 2. lrclib — 3 strategies
-  const tryGet = async (url) => {
+  // 2. lrclib — 3 strategies in parallel (whichever returns synced wins)
+  const fetchWithTimeout = async (url, ms = 6000) => {
     try {
-      const r = await fetch(url);
+      const r = await fetch(url, { signal: AbortSignal.timeout(ms) });
       if (!r.ok) return null;
       const d = await r.json();
+      if (Array.isArray(d)) return d.find(x => x.syncedLyrics) || d[0] || null;
       return (d?.syncedLyrics || d?.plainLyrics) ? d : null;
     } catch { return null; }
   };
-  let lrc = await tryGet(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}&album_name=${eal}&duration=${dur}`);
+  const [lrcExact, lrcShort, lrcSearch] = await Promise.all([
+    fetchWithTimeout(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}&album_name=${eal}&duration=${dur}`),
+    fetchWithTimeout(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}`),
+    fetchWithTimeout(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + ' ' + title)}`),
+  ]);
   if (stale()) return;
-  if (!lrc) lrc = await tryGet(`https://lrclib.net/api/get?artist_name=${ea}&track_name=${et}`);
-  if (stale()) return;
-  if (!lrc) {
-    try {
-      const r3 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + ' ' + title)}`);
-      if (r3.ok) { const res = await r3.json(); lrc = res?.find(r => r.syncedLyrics) || res?.[0] || null; }
-    } catch {}
-  }
-  if (stale()) return;
+  // Prefer synced over plain, exact match over looser
+  const lrc = [lrcExact, lrcShort, lrcSearch].find(l => l?.syncedLyrics)
+           || [lrcExact, lrcShort, lrcSearch].find(l => l?.plainLyrics)
+           || null;
   if (lrc?.syncedLyrics) lyricsLines = parseLRC(lrc.syncedLyrics);
   else if (lrc?.plainLyrics) lyricsLines = lrc.plainLyrics.split('\n').filter(Boolean).map(text => ({ time: -1, text }));
-
-  // 3. lyrics.ovh fallback
-  if (!lyricsLines.length && artist && title) {
-    try {
-      const r4 = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
-      if (r4.ok) { const d4 = await r4.json(); if (d4?.lyrics) lyricsLines = d4.lyrics.split('\n').filter(Boolean).map(text => ({ time: -1, text })); }
-    } catch {}
-  }
   if (stale()) return;
 
   renderLyricsPanel();
@@ -1405,7 +1534,7 @@ async function openAddToPlaylistModal(trackUri) {
 
   const data = await fetchMyPlaylists();
   if (!data?.items?.length) {
-    listEl.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:13px">无歌单</div>';
+    listEl.innerHTML = `<div style="padding:16px;color:var(--text-muted);font-size:13px">${i18n[currentLang].no_playlists}</div>`;
     return;
   }
   listEl.innerHTML = data.items.map(p => `
@@ -1459,8 +1588,8 @@ function renderVinylShelf(tracks, contextUri, container) {
   });
 }
 
-function openVinylOverlay(track, contextUri, tracks = []) {
-  playTrack(track.uri, contextUri || null);
+function openVinylOverlay(track, contextUri, tracks = [], noPlay = false) {
+  if (!noPlay) playTrack(track.uri, contextUri || null);
   const img = track.album?.images?.[0]?.url || '';
   document.getElementById('vinyl-big-label').src = img;
   document.getElementById('vinyl-overlay-bg').src = img;
@@ -1491,6 +1620,7 @@ function openVinylOverlay(track, contextUri, tracks = []) {
   arm.classList.remove('playing');
   setTimeout(() => arm.classList.add('playing'), 80);
   document.getElementById('vinyl-overlay').classList.add('open');
+  document.getElementById('vinyl-volume-slider').value = volumeLevel;
   // Start visualizer on vinyl canvas
   if (viz.ready && isPlaying) {
     viz.canvas = document.getElementById('vinyl-visualizer');
@@ -1499,9 +1629,26 @@ function openVinylOverlay(track, contextUri, tracks = []) {
   }
 }
 
+function switchToVinyl() {
+  if (!currentTrackUri) return;
+  const fakeTrack = {
+    uri: currentTrackUri,
+    name: document.getElementById('now-track-name')?.textContent || '—',
+    artists: [{ name: document.getElementById('now-artist-name')?.textContent || '' }],
+    album: { images: [{ url: currentArtUrl || '' }] },
+  };
+  closeNPO();
+  openVinylOverlay(fakeTrack, currentContextUri, [], true);
+}
+
+function switchToNPO() {
+  closeVinylOverlay();
+  openNPO();
+}
+
 function closeVinylOverlay() {
   const overlay = document.getElementById('vinyl-overlay');
-  overlay.classList.remove('open', 'vinyl-lyrics-open');
+  overlay.classList.remove('open', 'vinyl-lyrics-open', 'controls-idle', 'vinyl-queue-open');
   const arm = document.getElementById('vinyl-tonearm');
   arm?.classList.remove('playing');
   document.getElementById('vinyl-overlay-orbs')?.classList.remove('ready');
@@ -1589,12 +1736,15 @@ async function openArtist(id) {
     api(`/artists/${id}/top-tracks?market=from_token`),
     api(`/artists/${id}/albums?limit=12&include_groups=album,single`),
   ]);
-  if (!artist) { container.innerHTML = `<div class="loading-text">加载失败</div>`; return; }
+  const tr = i18n[currentLang];
+  if (!artist) { container.innerHTML = `<div class="loading-text">${tr.artist_load_fail}</div>`; return; }
 
   const img = artist.images?.[0]?.url || '';
   const followers = (artist.followers?.total || 0).toLocaleString();
   const topTracks = topData?.tracks?.slice(0, 10) || [];
   const albums = albumData?.items || [];
+  const albumLabel = currentLang === 'zh' ? '专辑' : 'Album';
+  const singleLabel = currentLang === 'zh' ? '单曲' : 'Single';
 
   container.innerHTML = `
     <div class="artist-hero">
@@ -1603,23 +1753,23 @@ async function openArtist(id) {
       <div class="artist-hero-content">
         <img class="artist-avatar" src="${img}" alt="">
         <div class="artist-hero-info">
-          <div class="artist-type">艺术家</div>
+          <div class="artist-type">${tr.artist_type}</div>
           <div class="artist-name">${esc(artist.name)}</div>
-          <div class="artist-followers">${followers} 粉丝</div>
+          <div class="artist-followers">${followers} ${tr.artist_followers}</div>
         </div>
       </div>
     </div>
     <div class="artist-body">
-      ${topTracks.length ? `<section class="content-section"><h2>热门歌曲</h2>${trackListHTML(topTracks)}</section>` : ''}
+      ${topTracks.length ? `<section class="content-section"><h2>${tr.artist_top_tracks}</h2>${trackListHTML(topTracks)}</section>` : ''}
       ${albums.length ? `
         <section class="content-section">
-          <h2>专辑 &amp; 单曲</h2>
+          <h2>${tr.artist_albums}</h2>
           <div class="card-grid">
             ${albums.map(a => `
               <div class="card" data-album-id="${a.id}" data-ctx="${a.uri}">
                 <img src="${a.images?.[0]?.url || ''}" alt="" class="card-img">
                 <div class="card-name">${esc(a.name)}</div>
-                <div class="card-sub">${(a.release_date || '').slice(0, 4)} · ${a.album_type === 'single' ? '单曲' : '专辑'}</div>
+                <div class="card-sub">${(a.release_date || '').slice(0, 4)} · ${a.album_type === 'single' ? singleLabel : albumLabel}</div>
                 <button class="card-play-btn" data-uri="${a.uri}">▶</button>
               </div>`).join('')}
           </div>
@@ -1685,8 +1835,8 @@ function esc(s) {
 // ── Queue Panel ───────────────────────────────────────────────
 let queueOpen = false;
 
-function renderQueueItems(items) {
-  const list = document.getElementById('queue-list');
+function renderQueueItems(items, listEl) {
+  const list = listEl || document.getElementById('queue-list');
   if (!list) return;
   list.innerHTML = items.map((t, i) => `
     <div class="queue-item${i === 0 ? ' queue-now' : ''}" data-uri="${t.uri}">
@@ -1702,14 +1852,77 @@ function renderQueueItems(items) {
   });
 }
 
+// Returns full queue by extending the API's ~20 limit with the current context tracks
+async function fetchFullQueue() {
+  const data = await api('/me/player/queue');
+  if (!data) return null;
+  const current = data.currently_playing;
+  const apiNext = (data.queue || []).filter(t => t?.type === 'track');
+
+  if (currentContextUri && current) {
+    let contextTracks = null;
+
+    if (cachedPlaylistUri === currentContextUri && cachedPlaylistTracks.length) {
+      contextTracks = cachedPlaylistTracks;
+    } else if (currentContextUri.startsWith('spotify:playlist:')) {
+      const id = currentContextUri.split(':').pop();
+      let all = [], next = `/playlists/${id}/items?limit=100`;
+      while (next) {
+        const page = await api(next.replace('https://api.spotify.com/v1', ''));
+        if (!page) break;
+        all = all.concat(page.items || []);
+        next = page.next;
+      }
+      contextTracks = all.map(i => i.track || i.item).filter(t => t?.type === 'track');
+      cachedPlaylistTracks = contextTracks;
+      cachedPlaylistUri = currentContextUri;
+    } else if (currentContextUri.startsWith('spotify:album:')) {
+      const id = currentContextUri.split(':').pop();
+      let all = [], next = `/albums/${id}/tracks?limit=50`;
+      while (next) {
+        const page = await api(next.replace('https://api.spotify.com/v1', ''));
+        if (!page) break;
+        all = all.concat(page.items || []);
+        next = page.next;
+      }
+      contextTracks = all.filter(t => t?.type === 'track');
+    } else if (likedCollectionUri && currentContextUri === likedCollectionUri
+               && cachedPlaylistUri === likedCollectionUri && cachedPlaylistTracks.length) {
+      contextTracks = cachedPlaylistTracks;
+    }
+
+    if (contextTracks?.length) {
+      if (shuffleActive) {
+        // API's 20 are the real shuffled order; append remaining context tracks not yet seen
+        const seen = new Set([current.uri, ...apiNext.map(t => t.uri)]);
+        const rest = contextTracks.filter(t => !seen.has(t.uri));
+        return { currently_playing: current, queue: [...apiNext, ...rest] };
+      } else {
+        const idx = contextTracks.findIndex(t => t.uri === current.uri);
+        if (idx >= 0) {
+          return { currently_playing: current, queue: contextTracks.slice(idx + 1) };
+        }
+      }
+    }
+  }
+
+  return { currently_playing: current, queue: apiNext };
+}
+
+async function loadQueueInto(listEl, padStyle = 'padding:20px 14px;') {
+  listEl.innerHTML = `<div style="${padStyle}color:var(--text-muted);font-size:13px">${i18n[currentLang].loading}</div>`;
+  const data = await fetchFullQueue();
+  if (!data) { listEl.innerHTML = `<div style="${padStyle}color:var(--text-muted);font-size:13px">${i18n[currentLang].error_queue}</div>`; return null; }
+  const items = [data.currently_playing, ...(data.queue || [])].filter(t => t?.type === 'track');
+  if (!items.length) { listEl.innerHTML = `<div style="${padStyle}color:var(--text-muted);font-size:13px">${i18n[currentLang].queue_empty}</div>`; return null; }
+  renderQueueItems(items, listEl);
+  return items;
+}
+
 async function refreshQueueContent() {
   if (!queueOpen) return;
-  const data = await api('/me/player/queue');
-  if (!data) return;
-  const items = [data.currently_playing, ...(data.queue || [])].filter(t => t?.type === 'track');
-  if (items.length) {
-    renderQueueItems(items);
-    // Update next art for vinyl overlay
+  const items = await loadQueueInto(document.getElementById('queue-list'));
+  if (items) {
     const nextTrack = items[1];
     if (nextTrack) {
       vinylNextArt = nextTrack.album?.images?.[0]?.url || '';
@@ -1724,16 +1937,7 @@ async function toggleQueue() {
   queueOpen = !queueOpen;
   panel.classList.toggle('open', queueOpen);
   if (!queueOpen) return;
-
-  const list = document.getElementById('queue-list');
-  list.innerHTML = `<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">${i18n[currentLang].loading}</div>`;
-
-  const data = await api('/me/player/queue');
-  if (!data) { list.innerHTML = `<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">${i18n[currentLang].error_queue}</div>`; return; }
-
-  const items = [data.currently_playing, ...(data.queue || [])].filter(t => t?.type === 'track');
-  if (!items.length) { list.innerHTML = `<div style="padding:20px 14px;color:var(--text-muted);font-size:13px">${i18n[currentLang].queue_empty}</div>`; return; }
-  renderQueueItems(items);
+  await loadQueueInto(document.getElementById('queue-list'));
 }
 
 // ── App Icon ──────────────────────────────────────────────────
@@ -1780,7 +1984,8 @@ function setSleepTimer(minutes) {
     const left = Math.max(0, sleepTimerEnd - Date.now());
     const m = Math.floor(left / 60000);
     const s = Math.floor((left % 60000) / 1000);
-    if (noteEl) noteEl.textContent = `将在 ${m}:${String(s).padStart(2,'0')} 后暂停`;
+    const timeStr = `${m}:${String(s).padStart(2,'0')}`;
+    if (noteEl) noteEl.textContent = i18n[currentLang].sleep_countdown(timeStr);
   };
   updateNote();
   sleepNoteInterval = setInterval(updateNote, 1000);
@@ -1790,7 +1995,7 @@ function setSleepTimer(minutes) {
     await api('/me/player/pause', { method: 'PUT' });
     setTimeout(pollPlayback, 400);
     setSleepTimer(0);
-    showToast('睡眠定时器：已暂停播放');
+    showToast(i18n[currentLang].sleep_stopped);
   }, minutes * 60 * 1000);
 }
 
@@ -1798,10 +2003,11 @@ function setSleepTimer(minutes) {
 async function loadDevices() {
   const listEl = document.getElementById('devices-list');
   if (!listEl) return;
-  listEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px 0">加载中...</div>';
+  const tr = i18n[currentLang];
+  listEl.innerHTML = `<div style="color:var(--text-muted);font-size:12px;padding:4px 0">${tr.loading}</div>`;
   const data = await api('/me/player/devices');
   if (!data?.devices?.length) {
-    listEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px 0">未找到设备</div>';
+    listEl.innerHTML = `<div style="color:var(--text-muted);font-size:12px;padding:4px 0">${tr.device_none}</div>`;
     return;
   }
   listEl.innerHTML = data.devices.map(d => `
@@ -1815,7 +2021,7 @@ async function loadDevices() {
       </svg>
       <div class="device-info">
         <div class="device-name">${esc(d.name)}</div>
-        <div class="device-type">${d.type}${d.is_active ? ' · 当前设备' : ''}${d.volume_percent != null ? ` · ${d.volume_percent}%` : ''}</div>
+        <div class="device-type">${d.type}${d.is_active ? ` · ${tr.device_current}` : ''}${d.volume_percent != null ? ` · ${d.volume_percent}%` : ''}</div>
       </div>
       ${d.is_active ? '<span class="device-active-dot"></span>' : ''}
     </div>`).join('');
@@ -1825,35 +2031,18 @@ async function loadDevices() {
       const id = el.dataset.id;
       await api('/me/player', { method: 'PUT', body: JSON.stringify({ device_ids: [id], play: isPlaying }) });
       activeDeviceId = id;
-      showToast('已切换播放设备');
+      showToast(i18n[currentLang].device_switched);
       setTimeout(loadDevices, 800);
     });
   });
 }
 
-// ── Radio Mode ────────────────────────────────────────────────
-async function startRadio(seedTrackUri) {
-  const trackId = (seedTrackUri || currentTrackUri)?.split(':').pop();
-  if (!trackId) return;
-  showToast('正在生成电台...');
-  const data = await api(`/recommendations?seed_tracks=${trackId}&limit=30&market=from_token`);
-  if (!data?.tracks?.length) { showToast('无法生成电台'); return; }
-  const deviceId = await ensureDevice();
-  if (!deviceId) return;
-  const uris = [seedTrackUri || currentTrackUri, ...data.tracks.map(t => t.uri)].filter(Boolean);
-  await api(`/me/player/play?device_id=${deviceId}`, {
-    method: 'PUT',
-    body: JSON.stringify({ uris }),
-  });
-  setTimeout(pollPlayback, 800);
-  showToast(`已开始电台 · ${data.tracks.length + 1} 首歌`);
-}
 
 // ── Stats Page ────────────────────────────────────────────────
 async function loadStats() {
   const container = document.getElementById('stats-content');
   if (!container) return;
-  container.innerHTML = '<div class="loading-text">加载中...</div>';
+  container.innerHTML = `<div class="loading-text">${i18n[currentLang].loading}</div>`;
 
   const [tracksData, artistsData] = await Promise.all([
     api(`/me/top/tracks?limit=10&time_range=${statsRange}`),
@@ -1862,15 +2051,16 @@ async function loadStats() {
 
   let html = '';
 
+  const tr = i18n[currentLang];
   if (artistsData?.items?.length) {
-    html += `<section class="content-section"><h2>常听艺术家</h2><div class="stats-artists">`;
+    html += `<section class="content-section"><h2>${tr.stats_artists}</h2><div class="stats-artists">`;
     html += artistsData.items.map((a, i) => `
       <div class="stats-artist-item" data-artist-id="${a.id}">
         <span class="stats-rank">${i + 1}</span>
         <img class="stats-artist-img" src="${a.images?.[2]?.url || a.images?.[0]?.url || ''}" alt="">
         <div class="stats-artist-info">
           <div class="stats-artist-name">${esc(a.name)}</div>
-          <div class="stats-artist-genres">${(a.genres || []).slice(0,2).join(' · ') || '艺术家'}</div>
+          <div class="stats-artist-genres">${(a.genres || []).slice(0,2).join(' · ') || tr.stats_artist_fallback}</div>
         </div>
         <div class="stats-popularity">
           <div class="stats-pop-bar" style="width:${a.popularity || 0}%"></div>
@@ -1880,12 +2070,12 @@ async function loadStats() {
   }
 
   if (tracksData?.items?.length) {
-    html += `<section class="content-section"><h2>常听歌曲</h2>`;
+    html += `<section class="content-section"><h2>${tr.stats_tracks}</h2>`;
     html += trackListHTML(tracksData.items);
     html += `</section>`;
   }
 
-  if (!html) html = '<div class="loading-text" style="color:var(--text-muted)">暂无统计数据</div>';
+  if (!html) html = `<div class="loading-text" style="color:var(--text-muted)">${tr.stats_empty}</div>`;
   container.innerHTML = html;
 
   bindTrackRows(container);
@@ -1929,6 +2119,7 @@ const i18n = {
     // Loading / errors
     loading: '加载中...', error_playlist: '无法加载歌单', error_queue: '无法加载队列',
     btn_retry: '手动重试', api_quota: 'Spotify 每日 API 配额已耗尽',
+    api_quota_note: '等配额重置后再试（约 12:50 AM）', no_playlists: '无歌单',
     // Playlist view
     playlist_type: '播放列表', playlist_tracks_suffix: '首歌曲', play_all: '▶ 播放全部',
     playlist_no_api_tracks: '此歌单的歌曲无法通过 Spotify API 获取（仅支持自建歌单）。',
@@ -1946,6 +2137,29 @@ const i18n = {
     close_tray: '最小化到托盘', close_quit: '直接退出',
     close_note_tray: '按 × 隐藏窗口，从托盘图标可重新打开',
     close_note_quit: '按 × 直接退出 Aura',
+    // Glass
+    settings_glass: '沉浸式 · 玻璃颜色',
+    glass_black: '黑色', glass_color: '跟随歌曲', glass_clear: '透明',
+    // Sleep
+    settings_sleep: '睡眠定时器',
+    sleep_off: '关闭', sleep_15: '15 分', sleep_30: '30 分', sleep_60: '60 分',
+    sleep_countdown: (t) => `将在 ${t} 后暂停`, sleep_stopped: '睡眠定时器：已暂停播放',
+    // Devices
+    settings_devices: '播放设备',
+    device_current: '当前设备', device_none: '未找到设备', device_switched: '已切换播放设备',
+    // Queue panel
+    queue_header: '播放队列',
+    // Stats
+    stats_title: '你的音乐统计',
+    stats_short: '近 4 周', stats_medium: '近 6 个月', stats_long: '全时段',
+    stats_artists: '常听艺术家', stats_tracks: '常听歌曲', stats_empty: '暂无统计数据',
+    stats_artist_fallback: '艺术家',
+    // Nav
+    nav_stats: '统计',
+    // Artist page
+    artist_type: '艺术家', artist_followers: '粉丝',
+    artist_top_tracks: '热门歌曲', artist_albums: '专辑 & 单曲',
+    artist_load_fail: '加载失败',
   },
   en: {
     nav_home: 'Home', nav_search: 'Search', nav_library: 'Library',
@@ -1976,6 +2190,7 @@ const i18n = {
     // Loading / errors
     loading: 'Loading...', error_playlist: 'Could not load playlist', error_queue: 'Could not load queue',
     btn_retry: 'Retry', api_quota: 'Spotify daily API quota exhausted',
+    api_quota_note: 'Try again after quota resets (~12:50 AM)', no_playlists: 'No playlists',
     // Playlist view
     playlist_type: 'Playlist', playlist_tracks_suffix: 'tracks', play_all: '▶ Play All',
     playlist_no_api_tracks: 'Tracks in this playlist cannot be loaded via the Spotify API (only supported for playlists you own).',
@@ -1993,6 +2208,29 @@ const i18n = {
     close_tray: 'Minimize to tray', close_quit: 'Quit on close',
     close_note_tray: '× hides the window — reopen from the tray icon',
     close_note_quit: '× fully quits Aura',
+    // Glass
+    settings_glass: 'Immersive · Glass Color',
+    glass_black: 'Dark', glass_color: 'Dynamic', glass_clear: 'Clear',
+    // Sleep
+    settings_sleep: 'Sleep Timer',
+    sleep_off: 'Off', sleep_15: '15 min', sleep_30: '30 min', sleep_60: '60 min',
+    sleep_countdown: (t) => `Pausing in ${t}`, sleep_stopped: 'Sleep timer: playback paused',
+    // Devices
+    settings_devices: 'Playback Devices',
+    device_current: 'Active', device_none: 'No devices found', device_switched: 'Switched playback device',
+    // Queue panel
+    queue_header: 'Queue',
+    // Stats
+    stats_title: 'Your Music Stats',
+    stats_short: 'Last 4 Weeks', stats_medium: 'Last 6 Months', stats_long: 'All Time',
+    stats_artists: 'Top Artists', stats_tracks: 'Top Tracks', stats_empty: 'No stats available',
+    stats_artist_fallback: 'Artist',
+    // Nav
+    nav_stats: 'Stats',
+    // Artist page
+    artist_type: 'Artist', artist_followers: 'followers',
+    artist_top_tracks: 'Popular', artist_albums: 'Albums & Singles',
+    artist_load_fail: 'Failed to load',
   }
 };
 
@@ -2052,6 +2290,24 @@ function applyLang(lang) {
   document.getElementById('close-note').textContent = closeToTray ? t.close_note_tray : t.close_note_quit;
   document.getElementById('close-tray-btn').classList.toggle('active',  closeToTray);
   document.getElementById('close-quit-btn').classList.toggle('active', !closeToTray);
+  set('settings-glass-title', t.settings_glass);
+  set('glass-black-btn', t.glass_black);
+  set('glass-color-btn', t.glass_color);
+  set('glass-clear-btn', t.glass_clear);
+  set('settings-sleep-title', t.settings_sleep);
+  set('sleep-off-btn', t.sleep_off);
+  set('sleep-15-btn', t.sleep_15);
+  set('sleep-30-btn', t.sleep_30);
+  set('sleep-60-btn', t.sleep_60);
+  set('settings-devices-title', t.settings_devices);
+  set('queue-panel-h3', t.queue_header);
+  set('npo-queue-header-label', t.queue_header);
+  set('vinyl-queue-header-label', t.queue_header);
+  set('stats-title-h1', t.stats_title);
+  set('stats-tab-short', t.stats_short);
+  set('stats-tab-medium', t.stats_medium);
+  set('stats-tab-long', t.stats_long);
+  set('nav-stats-label', t.nav_stats);
   setGreeting();
 }
 
@@ -2112,7 +2368,11 @@ document.addEventListener('DOMContentLoaded', () => {
     await api('/me/player/shuffle?state=false', { method: 'PUT' });
     await api('/me/player/shuffle?state=true', { method: 'PUT' });
     showToast(i18n[currentLang].toast_reshuffled);
-    setTimeout(() => refreshQueueContent(), 900);
+    setTimeout(async () => {
+      refreshQueueContent();
+      const qData = await fetchFullQueue();
+      if (qData) window.electronAPI.updateImmersiveQueue({ queue: buildImmersiveQueue(qData) });
+    }, 900);
   };
   document.getElementById('shuffle-btn').addEventListener('click', doShuffle);
   document.getElementById('queue-reshuffle-btn').addEventListener('click', reshuffleQueue);
@@ -2132,6 +2392,8 @@ document.addEventListener('DOMContentLoaded', () => {
   volSlider.addEventListener('input', () => {
     volumeLevel = parseInt(volSlider.value);
     document.getElementById('volume-fill').style.width = volumeLevel + '%';
+    document.getElementById('npo-volume-slider').value = volumeLevel;
+    document.getElementById('vinyl-volume-slider').value = volumeLevel;
     clearTimeout(volTimer);
     volTimer = setTimeout(() => {
       api(`/me/player/volume?volume_percent=${volumeLevel}`, { method: 'PUT' });
@@ -2232,7 +2494,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const artist2 = document.getElementById('now-artist-name').textContent;
     window.electronAPI.showImmersive({ title: title2, artist: artist2, artUrl: trackArtUrl2, isPlaying, duration_ms: currentDuration });
     if (lyricsLines.length) window.electronAPI.updateImmersiveLyrics({ lines: lyricsLines, idx: currentLyricIdx });
-    const qData = await api('/me/player/queue');
+    const qData = await fetchFullQueue();
     if (qData) window.electronAPI.updateImmersiveQueue({ queue: buildImmersiveQueue(qData) });
   });
   window.electronAPI.onImmersiveAction(async type => {
@@ -2262,10 +2524,12 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('repeat-btn').classList.toggle('active', repeatMode > 0);
       document.getElementById('repeat-icon').classList.toggle('hidden', repeatMode === 2);
       document.getElementById('repeat-one-icon').classList.toggle('hidden', repeatMode !== 2);
+    } else if (type === 'reshuffle') {
+      reshuffleQueue();
     } else if (type.startsWith('play-uri:')) {
       playTrack(type.slice(9), currentContextUri || null);
       setTimeout(async () => {
-        const qData = await api('/me/player/queue');
+        const qData = await fetchFullQueue();
         if (qData) window.electronAPI.updateImmersiveQueue({ queue: buildImmersiveQueue(qData) });
       }, 1500);
     }
@@ -2280,6 +2544,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('queue-panel').classList.remove('open');
   });
   document.getElementById('vinyl-overlay-close').addEventListener('click', closeVinylOverlay);
+  document.getElementById('npo-to-vinyl-btn').addEventListener('click', switchToVinyl);
+  document.getElementById('vinyl-to-npo-btn').addEventListener('click', switchToNPO);
   // Tonearm click → toggle play/pause (lift off = pause, drop on = play)
   document.getElementById('vinyl-tonearm').addEventListener('click', togglePlayPause);
   // Prev/next navigation in vinyl overlay
@@ -2484,9 +2750,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('devices-refresh-btn')?.addEventListener('click', loadDevices);
   document.getElementById('settings-open-btn').addEventListener('click', loadDevices, { capture: true });
 
-  // Radio button
-  document.getElementById('radio-btn')?.addEventListener('click', () => startRadio());
-
   // Stats tabs
   document.querySelectorAll('.stats-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -2494,6 +2757,96 @@ document.addEventListener('DOMContentLoaded', () => {
       loadStats();
     });
   });
+
+  // Fullscreen state feedback
+  let isFsActive = false;
+  function setFullscreenUI(active) {
+    isFsActive = active;
+    document.querySelector('.titlebar')?.classList.toggle('hidden', active);
+    ['npo-fs-expand','vinyl-fs-expand'].forEach(id => document.getElementById(id)?.classList.toggle('hidden', active));
+    ['npo-fs-shrink','vinyl-fs-shrink'].forEach(id => document.getElementById(id)?.classList.toggle('hidden', !active));
+  }
+  window.electronAPI.onFullscreenState(setFullscreenUI);
+  document.getElementById('npo-fullscreen-btn')?.addEventListener('click', () => window.electronAPI.toggleFullscreen());
+  document.getElementById('vinyl-fullscreen-btn')?.addEventListener('click', () => window.electronAPI.toggleFullscreen());
+
+  // Embedded queue inside NPO
+  let npoQueueOpen = false;
+  async function toggleNPOQueue() {
+    npoQueueOpen = !npoQueueOpen;
+    document.getElementById('npo').classList.toggle('queue-open', npoQueueOpen);
+    if (!npoQueueOpen) return;
+    await loadQueueInto(document.getElementById('npo-queue-inner-list'), 'padding:16px 4px;');
+  }
+  document.getElementById('npo-queue-overlay-btn')?.addEventListener('click', toggleNPOQueue);
+  document.getElementById('npo-queue-inner-close')?.addEventListener('click', () => {
+    npoQueueOpen = false;
+    document.getElementById('npo').classList.remove('queue-open');
+  });
+
+  // Embedded queue inside vinyl overlay
+  let vinylQueueOpen = false;
+  async function toggleVinylQueue() {
+    vinylQueueOpen = !vinylQueueOpen;
+    document.getElementById('vinyl-overlay').classList.toggle('vinyl-queue-open', vinylQueueOpen);
+    if (!vinylQueueOpen) return;
+    await loadQueueInto(document.getElementById('vinyl-queue-inner-list'), 'padding:16px 4px;');
+  }
+  document.getElementById('vinyl-queue-overlay-btn')?.addEventListener('click', toggleVinylQueue);
+  document.getElementById('vinyl-queue-inner-close')?.addEventListener('click', () => {
+    vinylQueueOpen = false;
+    document.getElementById('vinyl-overlay').classList.remove('vinyl-queue-open');
+  });
+
+  // Volume in NPO and vinyl overlays (shared logic)
+  let overlayVolTimer;
+  function handleOverlayVolume(val) {
+    volumeLevel = val;
+    document.getElementById('volume-slider').value = val;
+    document.getElementById('volume-fill').style.width = val + '%';
+    document.getElementById('npo-volume-slider').value = val;
+    document.getElementById('vinyl-volume-slider').value = val;
+    clearTimeout(overlayVolTimer);
+    overlayVolTimer = setTimeout(() => api(`/me/player/volume?volume_percent=${val}`, { method: 'PUT' }), 300);
+  }
+  let overlaySavedVol = 70;
+  function handleOverlayMute() {
+    if (volumeLevel > 0) { overlaySavedVol = volumeLevel; handleOverlayVolume(0); }
+    else handleOverlayVolume(overlaySavedVol);
+    const muted = volumeLevel === 0;
+    ['npo','vinyl'].forEach(pfx => {
+      document.getElementById(`${pfx}-vol-icon`)?.classList.toggle('hidden', muted);
+      document.getElementById(`${pfx}-mute-icon`)?.classList.toggle('hidden', !muted);
+    });
+  }
+  document.getElementById('npo-volume-slider')?.addEventListener('input', e => handleOverlayVolume(parseInt(e.target.value)));
+  document.getElementById('vinyl-volume-slider')?.addEventListener('input', e => handleOverlayVolume(parseInt(e.target.value)));
+  document.getElementById('npo-mute-btn')?.addEventListener('click', handleOverlayMute);
+  document.getElementById('vinyl-mute-btn')?.addEventListener('click', handleOverlayMute);
+
+  // Auto-hide controls + cursor after 3s idle in NPO / vinyl overlay
+  (function setupOverlayIdleHide() {
+    const IDLE_MS = 3000;
+    const overlays = [
+      document.getElementById('npo'),
+      document.getElementById('vinyl-overlay'),
+    ];
+    let idleTimer = null;
+    function resetIdle(el) {
+      el.classList.remove('controls-idle');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => el.classList.add('controls-idle'), IDLE_MS);
+    }
+    overlays.forEach(el => {
+      el.addEventListener('mousemove', () => {
+        if (el.classList.contains('npo-open') || el.classList.contains('open')) resetIdle(el);
+      });
+      el.addEventListener('mouseleave', () => {
+        clearTimeout(idleTimer);
+        el.classList.remove('controls-idle');
+      });
+    });
+  })();
 
   setupSearch();
   init();

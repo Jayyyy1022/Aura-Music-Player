@@ -36,4 +36,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateImmersiveQueue:    (d) => ipcRenderer.send('immersive:queue', d),
   setImmersiveGlassMode:   (m) => ipcRenderer.send('immersive:glass-mode', m),
   onImmersiveAction:       (cb) => ipcRenderer.on('immersive:action', (_, t) => cb(t)),
+  onFullscreenState:       (cb) => ipcRenderer.on('fullscreen-state', (_, v) => cb(v)),
 });

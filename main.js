@@ -199,6 +199,8 @@ app.whenReady().then(() => {
   mainWindow.on('focus', () => {
     if (immersiveWindow?.isVisible()) immersiveWindow.hide();
   });
+  mainWindow.on('enter-full-screen', () => mainWindow.webContents.send('fullscreen-state', true));
+  mainWindow.on('leave-full-screen',  () => mainWindow.webContents.send('fullscreen-state', false));
   // Global hotkeys (Ctrl+Alt+←/Space/→)
   globalShortcut.register('CmdOrCtrl+Alt+Space', () => mainWindow?.webContents.send('hotkey', 'play-pause'));
   globalShortcut.register('CmdOrCtrl+Alt+Right', () => mainWindow?.webContents.send('hotkey', 'next'));
@@ -487,7 +489,7 @@ ipcMain.handle('fetch-lyrics', async (_, trackId, token) => {
   try {
     const res = await fetch(
       `https://spclient.wg.spotify.com/color-lyrics/v2/track/${trackId}?format=json&vocalRemoval=false&market=from_token`,
-      { headers: { 'Authorization': `Bearer ${token}`, 'App-Platform': 'WebPlayer' } }
+      { headers: { 'Authorization': `Bearer ${token}`, 'App-Platform': 'WebPlayer' }, signal: AbortSignal.timeout(5000) }
     );
     if (!res.ok) return null;
     return res.json();

@@ -190,6 +190,9 @@ html, body {
         <button class="ib" id="c-repeat">
           <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
         </button>
+        <button class="ib" id="c-reshuffle" title="重新随机">
+          <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M17 17h-1.5l-7.5-7.5H6V8h2.5l7.5 7.5H17v1.5l3-2-3-2V14zM6 17h1.5l2-2-1.06-1.06L6 15.5V14l-3 2 3 2V17zm8.5-8.5L15.5 9.5 17 8h-1V6.5l3 2-3 2V9h-1.5z"/></svg>
+        </button>
       </div>
       <div class="cw-vol">
         <button class="ib" id="c-mute">
@@ -431,8 +434,9 @@ xapi.onGlassMode(mode=>{ glassMode=mode; applyGlassMode(); });
 el('c-play').addEventListener('click',    ()=>xapi.action('play-pause'));
 el('c-prev').addEventListener('click',    ()=>xapi.action('prev'));
 el('c-next').addEventListener('click',    ()=>xapi.action('next'));
-el('c-shuffle').addEventListener('click', ()=>xapi.action('shuffle'));
-el('c-repeat').addEventListener('click',  ()=>xapi.action('repeat'));
+el('c-shuffle').addEventListener('click',    ()=>xapi.action('shuffle'));
+el('c-repeat').addEventListener('click',    ()=>xapi.action('repeat'));
+el('c-reshuffle').addEventListener('click', ()=>xapi.action('reshuffle'));
 el('c-mute').addEventListener('click', ()=>{
   const muted=parseInt(el('c-vs').value)>0;
   if(muted){ el('c-vs').value=0; el('c-vf').style.width='0%'; xapi.action('volume:0'); }
