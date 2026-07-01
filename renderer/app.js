@@ -63,6 +63,10 @@ let lyricsTrackId = '';
 let lyricsVisible = false;
 let vinylLyricsVisible = false;
 let addPlaylistPendingUri = null;
+let sleepTimerId = null;
+let sleepTimerEnd = 0;
+let sleepNoteInterval = null;
+let statsRange = 'short_term';
 let vinylPrevArt = '';
 let vinylNextArt = '';
 
@@ -1751,6 +1755,149 @@ function generateAppIcon() {
 }
 
 
+// ── Sleep Timer ───────────────────────────────────────────────
+function setSleepTimer(minutes) {
+  clearTimeout(sleepTimerId);
+  clearInterval(sleepNoteInterval);
+  sleepTimerId = null;
+  sleepTimerEnd = 0;
+  ['sleep-off-btn','sleep-15-btn','sleep-30-btn','sleep-60-btn'].forEach(id => {
+    document.getElementById(id)?.classList.remove('active');
+  });
+  const noteEl = document.getElementById('sleep-note');
+
+  if (minutes === 0) {
+    document.getElementById('sleep-off-btn')?.classList.add('active');
+    if (noteEl) noteEl.textContent = '';
+    return;
+  }
+
+  const btnId = `sleep-${minutes}-btn`;
+  document.getElementById(btnId)?.classList.add('active');
+  sleepTimerEnd = Date.now() + minutes * 60 * 1000;
+
+  const updateNote = () => {
+    const left = Math.max(0, sleepTimerEnd - Date.now());
+    const m = Math.floor(left / 60000);
+    const s = Math.floor((left % 60000) / 1000);
+    if (noteEl) noteEl.textContent = `将在 ${m}:${String(s).padStart(2,'0')} 后暂停`;
+  };
+  updateNote();
+  sleepNoteInterval = setInterval(updateNote, 1000);
+
+  sleepTimerId = setTimeout(async () => {
+    clearInterval(sleepNoteInterval);
+    await api('/me/player/pause', { method: 'PUT' });
+    setTimeout(pollPlayback, 400);
+    setSleepTimer(0);
+    showToast('睡眠定时器：已暂停播放');
+  }, minutes * 60 * 1000);
+}
+
+// ── Device Switcher ───────────────────────────────────────────
+async function loadDevices() {
+  const listEl = document.getElementById('devices-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px 0">加载中...</div>';
+  const data = await api('/me/player/devices');
+  if (!data?.devices?.length) {
+    listEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:4px 0">未找到设备</div>';
+    return;
+  }
+  listEl.innerHTML = data.devices.map(d => `
+    <div class="device-item${d.is_active ? ' device-active' : ''}" data-id="${d.id}">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="flex-shrink:0;opacity:0.7">
+        ${d.type === 'Smartphone'
+          ? '<path d="M17 2H7c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H7V4h10v12z"/>'
+          : d.type === 'Speaker'
+          ? '<path d="M17 2H7c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-5 14c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm0-4c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1zM7 8h10V6H7v2z"/>'
+          : '<path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>'}
+      </svg>
+      <div class="device-info">
+        <div class="device-name">${esc(d.name)}</div>
+        <div class="device-type">${d.type}${d.is_active ? ' · 当前设备' : ''}${d.volume_percent != null ? ` · ${d.volume_percent}%` : ''}</div>
+      </div>
+      ${d.is_active ? '<span class="device-active-dot"></span>' : ''}
+    </div>`).join('');
+
+  listEl.querySelectorAll('.device-item:not(.device-active)').forEach(el => {
+    el.addEventListener('click', async () => {
+      const id = el.dataset.id;
+      await api('/me/player', { method: 'PUT', body: JSON.stringify({ device_ids: [id], play: isPlaying }) });
+      activeDeviceId = id;
+      showToast('已切换播放设备');
+      setTimeout(loadDevices, 800);
+    });
+  });
+}
+
+// ── Radio Mode ────────────────────────────────────────────────
+async function startRadio(seedTrackUri) {
+  const trackId = (seedTrackUri || currentTrackUri)?.split(':').pop();
+  if (!trackId) return;
+  showToast('正在生成电台...');
+  const data = await api(`/recommendations?seed_tracks=${trackId}&limit=30&market=from_token`);
+  if (!data?.tracks?.length) { showToast('无法生成电台'); return; }
+  const deviceId = await ensureDevice();
+  if (!deviceId) return;
+  const uris = [seedTrackUri || currentTrackUri, ...data.tracks.map(t => t.uri)].filter(Boolean);
+  await api(`/me/player/play?device_id=${deviceId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ uris }),
+  });
+  setTimeout(pollPlayback, 800);
+  showToast(`已开始电台 · ${data.tracks.length + 1} 首歌`);
+}
+
+// ── Stats Page ────────────────────────────────────────────────
+async function loadStats() {
+  const container = document.getElementById('stats-content');
+  if (!container) return;
+  container.innerHTML = '<div class="loading-text">加载中...</div>';
+
+  const [tracksData, artistsData] = await Promise.all([
+    api(`/me/top/tracks?limit=10&time_range=${statsRange}`),
+    api(`/me/top/artists?limit=8&time_range=${statsRange}`),
+  ]);
+
+  let html = '';
+
+  if (artistsData?.items?.length) {
+    html += `<section class="content-section"><h2>常听艺术家</h2><div class="stats-artists">`;
+    html += artistsData.items.map((a, i) => `
+      <div class="stats-artist-item" data-artist-id="${a.id}">
+        <span class="stats-rank">${i + 1}</span>
+        <img class="stats-artist-img" src="${a.images?.[2]?.url || a.images?.[0]?.url || ''}" alt="">
+        <div class="stats-artist-info">
+          <div class="stats-artist-name">${esc(a.name)}</div>
+          <div class="stats-artist-genres">${(a.genres || []).slice(0,2).join(' · ') || '艺术家'}</div>
+        </div>
+        <div class="stats-popularity">
+          <div class="stats-pop-bar" style="width:${a.popularity || 0}%"></div>
+        </div>
+      </div>`).join('');
+    html += `</div></section>`;
+  }
+
+  if (tracksData?.items?.length) {
+    html += `<section class="content-section"><h2>常听歌曲</h2>`;
+    html += trackListHTML(tracksData.items);
+    html += `</section>`;
+  }
+
+  if (!html) html = '<div class="loading-text" style="color:var(--text-muted)">暂无统计数据</div>';
+  container.innerHTML = html;
+
+  bindTrackRows(container);
+  container.querySelectorAll('.stats-artist-item').forEach(el => {
+    el.addEventListener('click', () => openArtist(el.dataset.artistId));
+  });
+
+  // Sync tab active state
+  document.querySelectorAll('.stats-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.range === statsRange));
+}
+
 // ── i18n ─────────────────────────────────────────────────────
 const i18n = {
   zh: {
@@ -1940,6 +2087,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const view = item.dataset.view;
       switchView(view);
       if (view === 'library') loadLibrary();
+      if (view === 'stats') loadStats();
     });
   });
 
@@ -2325,6 +2473,27 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('update-bar-btn').classList.remove('hidden');
   });
   document.getElementById('update-bar-btn')?.addEventListener('click', () => window.electronAPI.installUpdate());
+
+  // Sleep timer
+  document.getElementById('sleep-off-btn')?.addEventListener('click', () => setSleepTimer(0));
+  document.getElementById('sleep-15-btn')?.addEventListener('click', () => setSleepTimer(15));
+  document.getElementById('sleep-30-btn')?.addEventListener('click', () => setSleepTimer(30));
+  document.getElementById('sleep-60-btn')?.addEventListener('click', () => setSleepTimer(60));
+
+  // Device switcher
+  document.getElementById('devices-refresh-btn')?.addEventListener('click', loadDevices);
+  document.getElementById('settings-open-btn').addEventListener('click', loadDevices, { capture: true });
+
+  // Radio button
+  document.getElementById('radio-btn')?.addEventListener('click', () => startRadio());
+
+  // Stats tabs
+  document.querySelectorAll('.stats-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      statsRange = tab.dataset.range;
+      loadStats();
+    });
+  });
 
   setupSearch();
   init();

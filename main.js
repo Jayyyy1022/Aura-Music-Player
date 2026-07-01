@@ -203,6 +203,10 @@ app.whenReady().then(() => {
   globalShortcut.register('CmdOrCtrl+Alt+Space', () => mainWindow?.webContents.send('hotkey', 'play-pause'));
   globalShortcut.register('CmdOrCtrl+Alt+Right', () => mainWindow?.webContents.send('hotkey', 'next'));
   globalShortcut.register('CmdOrCtrl+Alt+Left',  () => mainWindow?.webContents.send('hotkey', 'prev'));
+  // System media keys
+  globalShortcut.register('MediaPlayPause',    () => mainWindow?.webContents.send('hotkey', 'play-pause'));
+  globalShortcut.register('MediaNextTrack',    () => mainWindow?.webContents.send('hotkey', 'next'));
+  globalShortcut.register('MediaPreviousTrack',() => mainWindow?.webContents.send('hotkey', 'prev'));
 
   // Auto-updater
   autoUpdater.checkForUpdatesAndNotify().catch(() => {});

@@ -101,6 +101,10 @@
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 5h-3v5.5c0 1.38-1.12 2.5-2.5 2.5S10 13.88 10 12.5s1.12-2.5 2.5-2.5c.57 0 1.08.19 1.5.5V5h4v2zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6z"/></svg>
           <span>音乐库</span>
         </a>
+        <a class="nav-item" data-view="stats">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+          <span>统计</span>
+        </a>
       </nav>
 
       <div class="sidebar-divider"></div>
@@ -166,6 +170,19 @@
       <div id="artist-view" class="view hidden">
         <div id="artist-detail"></div>
       </div>
+
+      <!-- Stats -->
+      <div id="stats-view" class="view hidden">
+        <div class="stats-header">
+          <h1>你的音乐统计</h1>
+          <div class="stats-range-tabs">
+            <button class="stats-tab active" data-range="short_term">近 4 周</button>
+            <button class="stats-tab" data-range="medium_term">近 6 个月</button>
+            <button class="stats-tab" data-range="long_term">全时段</button>
+          </div>
+        </div>
+        <div id="stats-content"></div>
+      </div>
     </main>
   </div>
 
@@ -225,6 +242,9 @@
       </button>
       <button id="mini-player-bar-btn" class="icon-btn" title="Mini Player">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><rect x="4" y="9.5" width="16" height="5" rx="2.5"/></svg>
+      </button>
+      <button id="radio-btn" class="icon-btn" title="基于此歌的电台">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13v6l5-3z"/></svg>
       </button>
       <button id="immersive-btn" class="icon-btn" title="沉浸模式">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-12.5c-2.49 0-4.5 2.01-4.5 4.5S9.51 16.5 12 16.5s4.5-2.01 4.5-4.5-2.01-4.5-4.5-4.5zm0 7c-1.38 0-2.5-1.12-2.5-2.5S10.62 9.5 12 9.5s2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
@@ -397,6 +417,16 @@
           <button class="settings-lang-btn" id="glass-color-btn">跟随歌曲</button>
           <button class="settings-lang-btn" id="glass-clear-btn">透明</button>
         </div>
+        <div class="settings-section-title">睡眠定时器</div>
+        <div class="settings-lang-row">
+          <button class="settings-lang-btn active" id="sleep-off-btn">关闭</button>
+          <button class="settings-lang-btn" id="sleep-15-btn">15 分</button>
+          <button class="settings-lang-btn" id="sleep-30-btn">30 分</button>
+          <button class="settings-lang-btn" id="sleep-60-btn">60 分</button>
+        </div>
+        <div class="settings-note" id="sleep-note"></div>
+        <div class="settings-section-title">播放设备 <button id="devices-refresh-btn" class="icon-btn" style="font-size:12px;padding:2px 6px;margin-left:6px" title="刷新">↻</button></div>
+        <div id="devices-list" class="devices-list"></div>
       </div>
     </div>
   </div>
