@@ -377,7 +377,12 @@ ipcMain.on('discord:update', (_, d)    => {
 
 // ── Immersive Window ──────────────────────────────────────
 function createImmersiveWindow() {
-  const { bounds } = screen.getPrimaryDisplay();
+  // Use the display where the main window currently lives (handles multi-monitor)
+  const winBounds = mainWindow?.getBounds();
+  const display = winBounds
+    ? screen.getDisplayNearestPoint({ x: winBounds.x + winBounds.width / 2, y: winBounds.y + winBounds.height / 2 })
+    : screen.getPrimaryDisplay();
+  const { bounds } = display;
   immersiveWindow = new BrowserWindow({
     width: bounds.width, height: bounds.height,
     x: bounds.x, y: bounds.y,

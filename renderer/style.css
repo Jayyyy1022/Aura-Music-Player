@@ -679,6 +679,7 @@ body {
   gap: 12px;
   flex: 1;
   min-width: 0;
+  max-width: 320px;
 }
 .now-album-art {
   width: 56px;
@@ -717,8 +718,9 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  flex: 0 0 auto;
-  width: 440px;
+  flex: 0 1 440px;
+  min-width: 220px;
+  max-width: 440px;
 }
 .control-buttons {
   display: flex;
@@ -2569,3 +2571,16 @@ body.is-playing .track-row.playing .eq-bar { animation-play-state: running; }
   background: transparent;
 }
 .npo-vol-row .npo-top-btn:hover { background: transparent; }
+
+/* ─── Responsive: narrow window ─────────────── */
+@media (max-width: 800px) {
+  .volume-section { display: none; }
+  .now-playing-section { max-width: 220px; }
+  .controls-section { min-width: 180px; }
+}
+@media (max-width: 640px) {
+  .now-playing-section { max-width: 160px; }
+  .now-album-art { width: 40px; height: 40px; }
+  .control-buttons { gap: 8px; }
+  #shuffle-btn, #repeat-btn { display: none; }
+}

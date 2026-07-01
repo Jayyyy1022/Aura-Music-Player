@@ -485,11 +485,11 @@ makeDrag(el('qw-h'),el('qw'));
 
 // ── Default positions ──────────────────────────
 (function initPos(){
-  const W=window.screen.width, H=window.screen.height;
+  const W=window.innerWidth, H=window.innerHeight;
   const defs={
-    cw:{ left:Math.floor((W-700)/2)+'px', top:(H-98)+'px'             },
+    cw:{ left:Math.floor((W-700)/2)+'px', top:Math.max(0,H-110)+'px'  },
     lw:{ left:Math.floor((W-520)/2)+'px', top:Math.floor(H*0.62)+'px' },
-    qw:{ left:(W-280)+'px',               top:Math.floor((H-600)/2)+'px' },
+    qw:{ left:Math.max(0,W-260)+'px',     top:Math.floor((H-600)/2)+'px' },
   };
   for(const[wid,pos] of Object.entries(defs)){
     const e=el(wid);
