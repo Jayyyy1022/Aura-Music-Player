@@ -389,8 +389,8 @@ function createImmersiveWindow() {
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
-    alwaysOnTop: false,
-    focusable: false,
+    alwaysOnTop: true,
+    focusable: true,
     skipTaskbar: true,
     resizable: false,
     movable: false,
@@ -410,6 +410,7 @@ ipcMain.on('immersive:show', (_, data) => {
   if (data) immersiveWindow.webContents.send('immersive:update', data);
   if (immersiveWindow.isVisible()) return;
   const doShow = () => {
+    immersiveWindow.setAlwaysOnTop(true, 'screen-saver'); // highest level, above taskbar
     immersiveWindow.showInactive();
     immersiveWindow.setIgnoreMouseEvents(true, { forward: true });
     mainWindow?.minimize();
